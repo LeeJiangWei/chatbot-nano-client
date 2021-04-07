@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from tqdm import tqdm
 import numpy as np
+import io
 
 import pyaudio
 import wave
@@ -36,23 +37,15 @@ stream.stop_stream()
 stream.close()
 p.terminate()
 
-w = b''.join(frames)
-classifier.run_graph(w, labels, 5)
-exit(0)
+container = io.BytesIO()
 
-output_dir = "data/"
-output_path = output_dir + "{:%Y%m%d_%H%M%S}.wav".format(datetime.now())
-
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
-
-wf = wave.open(output_path, 'wb')
+wf = wave.open(container, 'wb')
 wf.setnchannels(CHANNELS)
 wf.setsampwidth(p.get_sample_size(FORMAT))
 wf.setframerate(RATE)
 wf.writeframes(b''.join(frames))
 wf.close()
 
-with open(output_path, 'rb') as f:
-    w = f.read()
-    classifier.run_graph(w, labels, 5)
+container.seek(0)
+w = container.read()
+classifier.run_graph(w, labels, 5)
