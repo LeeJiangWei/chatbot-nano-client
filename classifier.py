@@ -1,6 +1,9 @@
 import tensorflow as tf
 
 
+# Tensorboard visualize command:
+# python -m tensorflow.python.tools.import_pb_to_tensorboard --model_dir="./models/CRNN/CRNN_L.pb"  --log_dir="./tmp"
+
 def load_labels(filename):
     """Read in labels, one label per line."""
     return [line.rstrip() for line in tf.gfile.GFile(filename)]
