@@ -16,10 +16,14 @@ RATE = 16000
 RECORD_SECONDS = 1
 TOPK = 1
 
+W_SMOOTH = 5
+W_MAX = 10
+
 
 class Recorder(threading.Thread):
     def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000, record_seconds=1):
-        super(Recorder, self).__init__()
+        super(Recorder, self).__init__(daemon=True)
+        self.running = False
         self.pformat = pformat
         self.channels = channels
         self.rate = rate
@@ -33,7 +37,7 @@ class Recorder(threading.Thread):
         print("Recorder terminated")
 
     def run(self):
-        iter_rate = int(self.rate / self.chunk_length)
+        self.running = True
 
         print("Start recording...")
         stream = self.audio.open(format=self.pformat,
@@ -41,33 +45,33 @@ class Recorder(threading.Thread):
                                  rate=self.rate,
                                  input=True,
                                  frames_per_buffer=self.chunk_length)
-        while True:
-            try:
-                for _ in range(iter_rate):
-                    chunk = stream.read(self.chunk_length)
-                    self.lock.acquire()
-                    self.buffer.pop(0)
-                    self.buffer.append(chunk)
-                    self.lock.release()
-            except KeyboardInterrupt:
-                break
+        while self.running:
+            chunk = stream.read(self.chunk_length)
+            self.lock.acquire()
+            self.buffer.pop(0)
+            self.buffer.append(chunk)
+            self.lock.release()
 
         stream.stop_stream()
         stream.close()
         print("Stop recording...")
+
+    def terminate(self):
+        self.running = False
 
 
 if __name__ == '__main__':
     classifier.load_graph("./models/CRNN/CRNN_L.pb")
     labels = classifier.load_labels("./models/labels.txt")
 
+    history_probabilities = [np.zeros(len(labels)) for _ in range(W_SMOOTH)]
+    smooth_probabilities = [np.zeros(len(labels)) for _ in range(W_MAX)]
+    confidence = 0.0
+
     recorder = Recorder(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, RECORD_SECONDS)
-    recorder.setDaemon(True)
     recorder.start()
 
     plt.ion()
-    plt.figure()
-    plt.title("Signal Wave")
 
     with tf.Session() as sess:
         while True:
@@ -84,28 +88,49 @@ if __name__ == '__main__':
             wav_data = container.read()
 
             softmax_tensor = sess.graph.get_tensor_by_name("labels_softmax:0")
-            spectrogram_tensor = sess.graph.get_tensor_by_name("AudioSpectrogram:0")
             mfcc_tensor = sess.graph.get_tensor_by_name("Mfcc:0")
-            (predictions,), (spectrogram,), (mfcc,) = sess.run([softmax_tensor, spectrogram_tensor, mfcc_tensor],
-                                                               {"wav_data:0": wav_data})
+            (predictions,), (mfcc,) = sess.run([softmax_tensor, mfcc_tensor], {"wav_data:0": wav_data})
 
-            top_k = predictions.argsort()[-TOPK:][::-1]
-            for node_id in top_k:
-                human_string = labels[node_id]
-                score = predictions[node_id]
-                print('%s (score = %.5f)' % (human_string, score))
+            history_probabilities.pop(0)
+            history_probabilities.append(predictions)
+
+            smooth_predictions = np.sum(history_probabilities, axis=0) / W_SMOOTH
+
+            # top_k = smooth_predictions.argsort()[-TOPK:][::-1]
+            # for node_id in top_k:
+            #     human_string = labels[node_id]
+            #     score = smooth_predictions[node_id]
+            #     print('%s (score = %.5f)' % (human_string, score))
+
+            pred_index = predictions.argsort()[-1:][::-1][0]
+            pred = labels[pred_index]
+            pred_score = predictions[pred_index]
+
+            smooth_index = smooth_predictions.argsort()[-1:][::-1][0]
+            smooth = labels[smooth_index]
+            smooth_score = smooth_predictions[smooth_index]
+
+            smooth_probabilities.pop(0)
+            smooth_probabilities.append(smooth_predictions)
+
+            confidence = (np.prod(np.max(smooth_probabilities, axis=1))) ** (1 / len(labels))
+            # print('confidence = %.5f' % confidence)
 
             signals = np.frombuffer(b''.join(frames), dtype=np.int16)
 
-            plt.subplot(311)
+            plt.subplot(221)
             plt.title("Wave")
             plt.ylim([-500, 500])
             plt.plot(signals)
-            plt.subplot(312)
+            plt.subplot(222)
             plt.title("Spectrogram")
-            plt.imshow(spectrogram, interpolation='nearest', cmap=cm.coolwarm, origin='lower')
-            plt.subplot(313)
+            plt.specgram(signals, NFFT=480, Fs=16000)
+            plt.subplot(223)
             plt.title("MFCC")
             plt.imshow(np.swapaxes(mfcc, 0, 1), interpolation='nearest', cmap=cm.coolwarm, origin='lower')
+            plt.subplot(224)
+            plt.axis("off")
+            plt.text(0, 0.5, 'predict: %s (score = %.5f)\nsmooth: %s (score = %.5f)\nconfidence = %.5f' % (
+                pred, pred_score, smooth, smooth_score, confidence), ha="left", va="center")
             plt.pause(0.1)
             plt.clf()
