@@ -84,8 +84,10 @@ if __name__ == '__main__':
             wav_data = container.read()
 
             softmax_tensor = sess.graph.get_tensor_by_name("labels_softmax:0")
+            spectrogram_tensor = sess.graph.get_tensor_by_name("AudioSpectrogram:0")
             mfcc_tensor = sess.graph.get_tensor_by_name("Mfcc:0")
-            (predictions,), (mfcc,) = sess.run([softmax_tensor, mfcc_tensor], {"wav_data:0": wav_data})
+            (predictions,), (spectrogram,), (mfcc,) = sess.run([softmax_tensor, spectrogram_tensor, mfcc_tensor],
+                                                               {"wav_data:0": wav_data})
 
             top_k = predictions.argsort()[-TOPK:][::-1]
             for node_id in top_k:
@@ -95,11 +97,15 @@ if __name__ == '__main__':
 
             signals = np.frombuffer(b''.join(frames), dtype=np.int16)
 
-            plt.subplot(211)
+            plt.subplot(311)
+            plt.title("Wave")
             plt.ylim([-500, 500])
             plt.plot(signals)
-            plt.subplot(212)
-            plt.plot(mfcc)
-            # plt.imshow(mfcc, interpolation='nearest', cmap=cm.coolwarm, origin='lower')
+            plt.subplot(312)
+            plt.title("Spectrogram")
+            plt.imshow(spectrogram, interpolation='nearest', cmap=cm.coolwarm, origin='lower')
+            plt.subplot(313)
+            plt.title("MFCC")
+            plt.imshow(np.swapaxes(mfcc, 0, 1), interpolation='nearest', cmap=cm.coolwarm, origin='lower')
             plt.pause(0.1)
             plt.clf()
