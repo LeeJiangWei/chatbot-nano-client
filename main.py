@@ -8,7 +8,7 @@ import tensorflow as tf
 from matplotlib import cm
 
 import classifier
-from audiohandler import ListenThread, Recorder
+from audiohandler import Listener, Recorder
 
 CHUNK_LENGTH = 1000
 FORMAT = pyaudio.paInt16
@@ -28,8 +28,8 @@ if __name__ == '__main__':
     smooth_probabilities = [np.zeros(len(labels)) for _ in range(W_MAX)]
     confidence = 0.0
 
-    listener = ListenThread(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
-    listener.start()
+    listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
+    listener.listen()
 
     plt.ion()
 

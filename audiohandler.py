@@ -4,46 +4,36 @@ import pyaudio
 from tqdm import tqdm
 
 
-class ListenThread(threading.Thread):
+class Listener:
     def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000, listen_seconds=1):
-        super(ListenThread, self).__init__(daemon=True)
-        self.running = False
-
         self.pformat = pformat
         self.channels = channels
         self.rate = rate
         self.chunk_length = chunk_length
 
         self.audio = pyaudio.PyAudio()
-        self.lock = threading.Lock()
         self.buffer = [b'\x00' * chunk_length] * int(rate / chunk_length) * listen_seconds * 2
 
     def __del__(self):
         self.audio.terminate()
         print("ListenThread terminated")
 
-    def run(self):
-        self.running = True
+    def __callback(self, in_data, frame_count, time_info, status_flags):
+        self.buffer.pop(0)
+        self.buffer.append(in_data)
+        return None, pyaudio.paContinue
 
-        print("Start listening...")
-        stream = self.audio.open(format=self.pformat,
-                                 channels=self.channels,
-                                 rate=self.rate,
-                                 input=True,
-                                 frames_per_buffer=self.chunk_length)
-        while self.running:
-            chunk = stream.read(self.chunk_length)
-            self.lock.acquire()
-            self.buffer.pop(0)
-            self.buffer.append(chunk)
-            self.lock.release()
-
-        stream.stop_stream()
-        stream.close()
-        print("Stop listening...")
+    def listen(self):
+        self.stream = self.audio.open(format=self.pformat,
+                                      channels=self.channels,
+                                      rate=self.rate,
+                                      input=True,
+                                      frames_per_buffer=self.chunk_length,
+                                      stream_callback=self.__callback)
+        self.stream.start_stream()
 
     def terminate(self):
-        self.running = False
+        self.stream.stop_stream()
 
 
 class Recorder:
@@ -87,17 +77,6 @@ class PlayList:
 
 
 if __name__ == '__main__':
-    recorder = Recorder()
-    buffer = recorder.record()
-
-    p = pyaudio.PyAudio()
-
-    stream = p.open(format=pyaudio.paInt16,
-                    channels=1,
-                    rate=16000,
-                    output=True)
-
-    stream.write(b''.join(buffer))
-
-    stream.stop_stream()
-    stream.close()
+    listener = Listener()
+    listener.listen()
+    listener.terminate()
