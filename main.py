@@ -8,7 +8,7 @@ import tensorflow as tf
 from matplotlib import cm
 
 import classifier
-from audiohandler import Listener, Recorder
+from audiohandler import Listener, Recorder, Player
 
 CHUNK_LENGTH = 1000
 FORMAT = pyaudio.paInt16
@@ -16,9 +16,12 @@ CHANNELS = 1
 RATE = 16000
 LISTEN_SECONDS = 1
 TOPK = 1
+EXPECTED_WORD = "yes"
 
 W_SMOOTH = 5
 W_MAX = 10
+
+PLOT = True
 
 if __name__ == '__main__':
     classifier.load_graph("./models/CRNN/CRNN_L.pb")
@@ -27,14 +30,17 @@ if __name__ == '__main__':
     history_probabilities = [np.zeros(len(labels)) for _ in range(W_SMOOTH)]
     smooth_probabilities = [np.zeros(len(labels)) for _ in range(W_MAX)]
     confidence = 0.0
+    smooth_pred = ""
 
     listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
+    recorder = Recorder()
+    player = Player()
+
     listener.listen()
 
-    plt.ion()
-
     with tf.Session() as sess:
-        while True:
+
+        while not (smooth_pred == EXPECTED_WORD and confidence > 0.5):
             frames = listener.buffer[:int(RATE / CHUNK_LENGTH * LISTEN_SECONDS)]
 
             container = io.BytesIO()
@@ -67,30 +73,43 @@ if __name__ == '__main__':
             pred_score = predictions[pred_index]
 
             smooth_index = smooth_predictions.argsort()[-1:][::-1][0]
-            smooth = labels[smooth_index]
+            smooth_pred = labels[smooth_index]
             smooth_score = smooth_predictions[smooth_index]
 
             smooth_probabilities.pop(0)
             smooth_probabilities.append(smooth_predictions)
 
             confidence = (np.prod(np.max(smooth_probabilities, axis=1))) ** (1 / len(labels))
-            # print('confidence = %.5f' % confidence)
 
             signals = np.frombuffer(b''.join(frames), dtype=np.int16)
 
-            plt.subplot(221)
-            plt.title("Wave")
-            plt.ylim([-500, 500])
-            plt.plot(signals)
-            plt.subplot(222)
-            plt.title("Spectrogram")
-            plt.specgram(signals, NFFT=480, Fs=16000)
-            plt.subplot(223)
-            plt.title("MFCC")
-            plt.imshow(np.swapaxes(mfcc, 0, 1), interpolation='nearest', cmap=cm.coolwarm, origin='lower')
-            plt.subplot(224)
-            plt.axis("off")
-            plt.text(0, 0.5, 'predict: %s (score = %.5f)\nsmooth: %s (score = %.5f)\nconfidence = %.5f' % (
-                pred, pred_score, smooth, smooth_score, confidence), ha="left", va="center")
-            plt.pause(0.1)
-            plt.clf()
+            if PLOT:
+                plt.ion()
+                plt.subplot(221)
+                plt.title("Wave")
+                plt.ylim([-500, 500])
+                plt.plot(signals)
+                plt.subplot(222)
+                plt.title("Spectrogram")
+                plt.specgram(signals, NFFT=480, Fs=16000)
+                plt.subplot(223)
+                plt.title("MFCC")
+                plt.imshow(np.swapaxes(mfcc, 0, 1), interpolation='nearest', cmap=cm.coolwarm, origin='lower')
+                plt.subplot(224)
+                plt.axis("off")
+                plt.text(0, 0.5, 'predict: %s (score = %.5f)\nsmooth: %s (score = %.5f)\nconfidence = %.5f' % (
+                    pred, pred_score, smooth_pred, smooth_score, confidence), ha="left", va="center")
+                plt.pause(0.1)
+                plt.clf()
+            else:
+                print('predict: %s (score = %.5f)  smooth: %s (score = %.5f)  confidence = %.5f' % (
+                    pred, pred_score, smooth_pred, smooth_score, confidence))
+
+    listener.terminate()
+
+    recorder.record()
+    # TODO:
+    # send_to_server()
+    # recieve_from_server()
+    player.playlist.append()
+    player.play_list()

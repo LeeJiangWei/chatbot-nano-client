@@ -1,5 +1,3 @@
-import threading
-
 import pyaudio
 from tqdm import tqdm
 
@@ -34,6 +32,7 @@ class Listener:
 
     def terminate(self):
         self.stream.stop_stream()
+        self.stream.close()
 
 
 class Recorder:
@@ -72,8 +71,31 @@ class Recorder:
         self.buffer = []
 
 
-class PlayList:
-    pass
+class Player:
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000):
+        self.pformat = pformat
+        self.channels = channels
+        self.rate = rate
+
+        self.audio = pyaudio.PyAudio()
+        self.playlist = []
+
+    def __del__(self):
+        self.audio.terminate()
+        print("Player terminated")
+
+    def play(self, data):
+        stream = self.audio.open(format=self.pformat,
+                                 channels=self.channels,
+                                 rate=self.rate,
+                                 output=True)
+        stream.write(data)
+        stream.stop_stream()
+        stream.close()
+
+    def play_list(self):
+        while self.playlist:
+            self.play(b''.join(self.playlist.pop(0)))
 
 
 if __name__ == '__main__':
