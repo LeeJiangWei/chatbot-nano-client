@@ -9,6 +9,7 @@ from matplotlib import cm
 
 import classifier
 from audiohandler import Listener, Recorder, Player
+from api import get_server_response
 
 CHUNK_LENGTH = 1000
 FORMAT = pyaudio.paInt16
@@ -84,7 +85,6 @@ if __name__ == '__main__':
             signals = np.frombuffer(b''.join(frames), dtype=np.int16)
 
             if PLOT:
-                plt.ion()
                 plt.subplot(221)
                 plt.title("Wave")
                 plt.ylim([-500, 500])
@@ -107,9 +107,20 @@ if __name__ == '__main__':
 
     listener.terminate()
 
-    recorder.record()
-    # TODO:
-    # send_to_server()
-    # recieve_from_server()
-    player.playlist.append()
-    player.play_list()
+    wav = recorder.record()
+
+    container = io.BytesIO()
+    wf = wave.open(container, 'wb')
+    wf.setnchannels(1)
+    wf.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
+    wf.setframerate(16000)
+    wf.writeframes(b''.join(wav))
+    wf.close()
+    container.seek(0)
+    wav_data = container.read()
+
+    print("Waiting server...")
+    response_list, wav_list = get_server_response(wav_data)
+    for r, w in zip(response_list, wav_list):
+        print(r)
+        player.play(w)

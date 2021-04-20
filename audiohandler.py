@@ -4,6 +4,7 @@ from tqdm import tqdm
 
 class Listener:
     def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000, listen_seconds=1):
+        # should match KWS module
         self.pformat = pformat
         self.channels = channels
         self.rate = rate
@@ -14,7 +15,7 @@ class Listener:
 
     def __del__(self):
         self.audio.terminate()
-        print("ListenThread terminated")
+        print("Listener terminated.")
 
     def __callback(self, in_data, frame_count, time_info, status_flags):
         self.buffer.pop(0)
@@ -37,6 +38,7 @@ class Listener:
 
 class Recorder:
     def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000):
+        # should match ASR module
         self.pformat = pformat
         self.channels = channels
         self.rate = rate
@@ -47,7 +49,7 @@ class Recorder:
 
     def __del__(self):
         self.audio.terminate()
-        print("Recorder terminated")
+        print("Recorder terminated.")
 
     def record(self, record_seconds=3):
         print("Start recording...")
@@ -72,17 +74,17 @@ class Recorder:
 
 
 class Player:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=22050):
+        # should match TTS module
         self.pformat = pformat
         self.channels = channels
         self.rate = rate
 
         self.audio = pyaudio.PyAudio()
-        self.playlist = []
 
     def __del__(self):
         self.audio.terminate()
-        print("Player terminated")
+        print("Player terminated.")
 
     def play(self, data):
         stream = self.audio.open(format=self.pformat,
@@ -92,10 +94,6 @@ class Player:
         stream.write(data)
         stream.stop_stream()
         stream.close()
-
-    def play_list(self):
-        while self.playlist:
-            self.play(b''.join(self.playlist.pop(0)))
 
 
 if __name__ == '__main__':
