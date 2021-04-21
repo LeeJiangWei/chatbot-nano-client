@@ -1,3 +1,4 @@
+import audioop
 import pyaudio
 from tqdm import tqdm
 
@@ -9,13 +10,14 @@ class Listener:
         self.channels = channels
         self.rate = rate
         self.chunk_length = chunk_length
+        self.listen_seconds = listen_seconds
 
         self.audio = pyaudio.PyAudio()
-        self.buffer = [b'\x00' * chunk_length] * int(rate / chunk_length) * listen_seconds * 2
+        self.buffer = [b'\x01' * chunk_length * pyaudio.get_sample_size(pformat)] * int(
+            rate / chunk_length) * listen_seconds * 2
 
     def __del__(self):
         self.audio.terminate()
-        print("Listener terminated.")
 
     def __callback(self, in_data, frame_count, time_info, status_flags):
         self.buffer.pop(0)
@@ -23,6 +25,9 @@ class Listener:
         return None, pyaudio.paContinue
 
     def listen(self):
+        self.buffer = [b'\x01' * self.chunk_length * pyaudio.get_sample_size(self.pformat)] * int(
+            self.rate / self.chunk_length) * self.listen_seconds * 2
+
         self.stream = self.audio.open(format=self.pformat,
                                       channels=self.channels,
                                       rate=self.rate,
@@ -31,7 +36,7 @@ class Listener:
                                       stream_callback=self.__callback)
         self.stream.start_stream()
 
-    def terminate(self):
+    def stop(self):
         self.stream.stop_stream()
         self.stream.close()
 
@@ -49,10 +54,9 @@ class Recorder:
 
     def __del__(self):
         self.audio.terminate()
-        print("Recorder terminated.")
 
     def record(self, record_seconds=3):
-        print("Start recording...")
+        self.buffer = []
         stream = self.audio.open(format=self.pformat,
                                  channels=self.channels,
                                  rate=self.rate,
@@ -65,12 +69,34 @@ class Recorder:
 
         stream.stop_stream()
         stream.close()
-        print("Stop recording...")
 
         return self.buffer
 
-    def clear_buffer(self):
+    def record_auto(self, silence_threshold=100, max_silence_second=1):
         self.buffer = []
+        width = pyaudio.get_sample_size(self.pformat)
+        buffer_window_len = int(self.rate / self.chunk_length * max_silence_second)
+
+        stream = self.audio.open(format=self.pformat,
+                                 channels=self.channels,
+                                 rate=self.rate,
+                                 input=True,
+                                 frames_per_buffer=self.chunk_length)
+
+        while True:
+            chunk = stream.read(self.chunk_length)
+            self.buffer.append(chunk)
+
+            data = b''.join(self.buffer[-buffer_window_len:])
+            rms = audioop.rms(data, width)
+
+            if len(self.buffer) > buffer_window_len and rms < silence_threshold:
+                break
+
+        stream.stop_stream()
+        stream.close()
+
+        return self.buffer
 
 
 class Player:
@@ -84,7 +110,6 @@ class Player:
 
     def __del__(self):
         self.audio.terminate()
-        print("Player terminated.")
 
     def play(self, data):
         stream = self.audio.open(format=self.pformat,
@@ -97,6 +122,5 @@ class Player:
 
 
 if __name__ == '__main__':
-    listener = Listener()
-    listener.listen()
-    listener.terminate()
+    recorder = Recorder()
+    buffer = recorder.record_auto()
