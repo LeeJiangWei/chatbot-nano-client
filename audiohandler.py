@@ -1,3 +1,4 @@
+import wave
 import audioop
 import pyaudio
 from tqdm import tqdm
@@ -119,6 +120,17 @@ class Player:
         stream.write(data)
         stream.stop_stream()
         stream.close()
+
+    def play_wav(self, path):
+        with wave.open(path) as wf:
+            stream = self.audio.open(format=
+                                     self.audio.get_format_from_width(wf.getsampwidth()),
+                                     channels=wf.getnchannels(),
+                                     rate=wf.getframerate(),
+                                     output=True)
+            stream.write(wf.readframes(wf.getnframes()))
+            stream.stop_stream()
+            stream.close()
 
 
 if __name__ == '__main__':

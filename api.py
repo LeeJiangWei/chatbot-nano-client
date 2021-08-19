@@ -3,7 +3,7 @@ import zipfile
 
 import requests
 
-SERVER_HOST = "222.201.137.105"
+SERVER_HOST = "gentlecomet.com"
 SERVER_PORT = 8000
 
 

@@ -36,7 +36,7 @@ logger.addHandler(handler)
 
 
 def main():
-    classifier.load_graph("./models/CRNN/CRNN_dxx.pb")
+    classifier.load_graph("./models/CRNN_dxx.pb")
     labels = classifier.load_labels("./models/CRNN_labels.txt")
 
     listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
