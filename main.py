@@ -24,7 +24,7 @@ EXPECTED_WORD = "dxx"
 W_SMOOTH = 5
 W_MAX = 10
 
-PLOT = True
+PLOT = False
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
@@ -119,6 +119,7 @@ def main():
                         pred, pred_score, smooth_pred, smooth_score, confidence))
 
             listener.stop()
+            player.play_wav("./sounds/response.wav")
 
             # interact loop
             while True:
