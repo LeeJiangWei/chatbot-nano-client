@@ -13,6 +13,7 @@ import classifier
 from audiohandler import Listener, Recorder, Player
 from utils import get_response
 
+RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
@@ -40,7 +41,7 @@ def main():
     labels = classifier.load_labels("./models/CRNN_labels.txt")
 
     listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
-    recorder = Recorder(FORMAT, CHANNELS, RATE, CHUNK_LENGTH)
+    recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
     player = Player()
 
     with tf.Session() as sess:
@@ -124,12 +125,15 @@ def main():
             # interact loop
             while True:
                 logger.info("Start recording...")
-                wav = recorder.record_auto()
+                wav, _flags = recorder.record_auto()
                 logger.info("Stop recording.")
 
-                if len(wav) < RATE / CHUNK_LENGTH * 1.5:
+                if not _flags:
                     logger.info("No sound detected, conversation canceled.")
                     break
+                # if len(wav) < RATE / CHUNK_LENGTH * 1.5:
+                #     logger.info("No sound detected, conversation canceled.")
+                #     break
 
                 container = io.BytesIO()
                 wf = wave.open(container, 'wb')

@@ -2,6 +2,7 @@ import wave
 import audioop
 import pyaudio
 from tqdm import tqdm
+import webrtcvad
 
 
 class Listener:
@@ -73,10 +74,10 @@ class Recorder:
 
         return self.buffer
 
-    def record_auto(self, silence_threshold=100, max_silence_second=1):
+    def record_auto(self, silence_threshold=200, max_silence_second=1):
         self.buffer = []
-        width = pyaudio.get_sample_size(self.pformat)
-        buffer_window_len = int(self.rate / self.chunk_length * max_silence_second)
+        # width = pyaudio.get_sample_size(self.pformat)
+        # buffer_window_len = int(self.rate / self.chunk_length * max_silence_second)
 
         stream = self.audio.open(format=self.pformat,
                                  channels=self.channels,
@@ -84,20 +85,52 @@ class Recorder:
                                  input=True,
                                  frames_per_buffer=self.chunk_length)
 
+        vad = webrtcvad.Vad(mode=2)
+        start_count = 0
+        stop_count = 0
+        exit_count = 0
         while True:
-            chunk = stream.read(self.chunk_length)
-            self.buffer.append(chunk)
+            chunk = stream.read(int(self.chunk_length * self.rate / 1000))
+            # self.buffer.append(chunk)
 
-            data = b''.join(self.buffer[-buffer_window_len:])
-            rms = audioop.rms(data, width)
+            # data = b''.join(self.buffer[-buffer_window_len:])
+            # rms = audioop.rms(data, width)
+            # print("%s\r" % rms)
 
-            if len(self.buffer) > buffer_window_len and rms < silence_threshold:
+            vad_flags = vad.is_speech(chunk, sample_rate=self.rate)
+
+            # ready
+            if start_count < 10:
+                if vad_flags:
+                    start_count += 1
+                    # print("listening")
+                    self.buffer.append(chunk)
+                    exit_count = max(0, exit_count - 1)
+                else:
+                    self.buffer = []
+                    # print('sleeping..')
+                    start_count = 0
+                    exit_count += 1
+            # start
+            else:
+                # print('recording...')
+                self.buffer.append(chunk)
+                exit_count = 0
+                if not vad_flags:
+                    stop_count += 1
+                    exit_count += 1
+
+            if exit_count > 100 or stop_count > 15:
                 break
 
+            # if len(self.buffer) > buffer_window_len and rms < silence_threshold:
+            #     break
+
         stream.stop_stream()
+
         stream.close()
 
-        return self.buffer
+        return self.buffer, exit_count < 100
 
 
 class Player:
