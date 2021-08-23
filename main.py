@@ -11,7 +11,7 @@ from matplotlib import cm
 
 import classifier
 from audiohandler import Listener, Recorder, Player
-from api import get_server_response
+from utils import get_response
 
 CHUNK_LENGTH = 1000
 FORMAT = pyaudio.paInt16
@@ -142,7 +142,8 @@ def main():
                 wav_data = container.read()
 
                 logger.info("Waiting server...")
-                response_list, wav_list = get_server_response(wav_data)
+                recognized_str, response_list, wav_list = get_response(wav_data)
+                logger.info("Recognize result: " + recognized_str)
                 for r, w in zip(response_list, wav_list):
                     logger.info(r)
                     player.play(w)

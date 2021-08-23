@@ -123,7 +123,7 @@ def wav_bin_to_str(wav_data: bytes) -> str:
 
 ### 对话
 
-请求路径：`http://gentlecomet.com:8000/webhooks/rest/webhook`
+请求路径：`http://gentlecomet.com:5005/webhooks/rest/webhook`
 
 示例代码
 
