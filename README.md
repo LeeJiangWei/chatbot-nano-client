@@ -151,7 +151,7 @@ def get_rasa_response(message: str, sender: str = "server"):
 ```python
 import requests
 import io
-import wave
+import soundfile as sf
 
 def str_to_wav_bin(input_str: str) -> bytes:
     r = requests.post("http://gentlecomet.com:5051/binary", json={"text": input_str})
