@@ -51,7 +51,7 @@
 ```python
 import socket
 
-class asr_finite_state_machine:
+class ASRFSM:
     def __init__(self):
         self.curr_state = 'start'
         # trans 0: chinese or " " , 1: "/r" , 2: "/n"
@@ -78,24 +78,20 @@ class asr_finite_state_machine:
         elif word == '\n':
             self.curr_state = self.state_trans[self.curr_state][2]
 
-            
+
 def wav_bin_to_str(wav_data: bytes) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((ASR_HOST, ASR_PORT))
+    sock.connect(("gentlecomet.com", 5050))
 
     buffer = ""
 
-    fsm = asr_finite_state_machine()
+    fsm = ASRFSM()
 
     sock.send(wav_data)
     received_byte = sock.recv(2048)
     received_str = str(received_byte, encoding="utf-8")
     words = list(received_str)
     while received_str != "":
-        print(received_byte)
-        print(received_str)
-        print("-" * 80)
-
         for word in words:
             fsm.trans(word)
             state = fsm.get_state()
@@ -106,10 +102,8 @@ def wav_bin_to_str(wav_data: bytes) -> str:
                 buffer = buffer + word
             elif state == 'end':
                 buffer = buffer.replace(" ", "")
-                print("Final Recognized Result: ", buffer)
                 sock.close()
                 return buffer
-        # buffer = received_str
 
         received_byte = sock.recv(2048)
         received_str = str(received_byte, encoding="utf-8")
@@ -117,11 +111,10 @@ def wav_bin_to_str(wav_data: bytes) -> str:
 
     sock.close()
     buffer = buffer.replace(" ", "")
-    print("Final Recognized Result: ", buffer)
     return buffer
 ```
 
-### 对话
+### 对话（RASA）
 
 请求路径：`http://gentlecomet.com:5005/webhooks/rest/webhook`
 
@@ -131,14 +124,8 @@ def wav_bin_to_str(wav_data: bytes) -> str:
 import requests
 import json
 
-def get_rasa_response(message: str, sender: str = "server"):
-    """
-    Send message to rasa server and get response
-    :param message: String to be sent
-    :param sender: String that identify sender
-    :return: List of dicts
-    """
-    responses = requests.post(BASE_URL, data=json.dumps({"sender": sender, "message": message})).json()
+def question_to_answer(message: str, sender: str = "nano"):
+    responses = requests.post("http://gentlecomet:5005/webhooks/rest/webhook", data=json.dumps({"sender": sender, "message": message})).json()
     return responses
 ```
 

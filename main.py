@@ -11,7 +11,7 @@ from matplotlib import cm
 
 import classifier
 from audiohandler import Listener, Recorder, Player
-from utils import get_response
+from utils import get_response, TEST_INFO
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -131,9 +131,6 @@ def main():
                 if not _flags:
                     logger.info("No sound detected, conversation canceled.")
                     break
-                # if len(wav) < RATE / CHUNK_LENGTH * 1.5:
-                #     logger.info("No sound detected, conversation canceled.")
-                #     break
 
                 container = io.BytesIO()
                 wf = wave.open(container, 'wb')
@@ -146,7 +143,7 @@ def main():
                 wav_data = container.read()
 
                 logger.info("Waiting server...")
-                recognized_str, response_list, wav_list = get_response(wav_data)
+                recognized_str, response_list, wav_list = get_response(wav_data, TEST_INFO)
                 logger.info("Recognize result: " + recognized_str)
                 for r, w in zip(response_list, wav_list):
                     logger.info(r)
