@@ -115,7 +115,8 @@ TEST_INFO = '[{"category": "kettle", "color": "black", "on": "dining table", "ne
 
 
 def visual_to_sentence(query, info):
-    intent, query_category, query_color, position, = [query[i] for i in ("intent", "object", "color", "position")]
+    intent, query_category, query_color, query_on, query_near = [query[i] for i in
+                                                                 ("intent", "object", "color", "on", "near")]
 
     objects = json.loads(info)
     for obj in objects:
