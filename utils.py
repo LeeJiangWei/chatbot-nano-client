@@ -94,13 +94,13 @@ EN_ZH_MAPPING = {
     "projector": "投影仪",
     "tap": "水龙头",
     "whiteboard": "白板",
-    "green": "绿",
-    "red": "红",
-    "purple": "紫",
-    "black": "黑",
-    "yellow": "黄",
-    "blue": "蓝",
-    "white": "白"
+    "green": "绿色",
+    "red": "红色",
+    "purple": "紫色",
+    "black": "黑色",
+    "yellow": "黄色",
+    "blue": "蓝色",
+    "white": "白色"
 }
 
 SYNONYM = {
@@ -131,15 +131,15 @@ def visual_to_sentence(query, info):
                 if near:
                     sentence += f"在{near}旁边，"
                 if query_color:
-                    sentence = f"{color}色的" + sentence
+                    sentence = f"{color}的" + sentence
                 elif color:
-                    sentence = sentence + f"它是{color}色的，"
+                    sentence = sentence + f"它是{color}的，"
             elif intent == "ask_object_color":
-                sentence += f"是{color}色的。"
+                sentence += f"是{color}的。"
 
             return sentence
 
-    return f"没有看到{query_category}。"
+    return f"没有看到{query_color if query_color else ''}{query_category}。"
 
 
 def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
