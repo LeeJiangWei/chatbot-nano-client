@@ -8,10 +8,12 @@ import numpy as np
 import pyaudio
 import tensorflow as tf
 from matplotlib import cm
+import soundfile
 
 import classifier
 from audiohandler import Listener, Recorder, Player
 from utils import get_response, TEST_INFO
+from api import VoicePrint
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -43,6 +45,7 @@ def main():
     listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
     recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
     player = Player()
+    vpr = VoicePrint()
 
     with tf.Session() as sess:
         # main loop
@@ -54,6 +57,8 @@ def main():
 
             listener.listen()
             # keyword spotting loop
+
+
             while not (smooth_pred == EXPECTED_WORD and confidence > 0.5):
                 frames = listener.buffer[:int(RATE / CHUNK_LENGTH * LISTEN_SECONDS)]
 
@@ -120,6 +125,10 @@ def main():
                         pred, pred_score, smooth_pred, smooth_score, confidence))
 
             listener.stop()
+
+            spk_name=vpr.get_spk_name(wav_data)
+            print(spk_name)
+
             player.play_wav("./sounds/response.wav")
 
             # interact loop

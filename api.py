@@ -6,6 +6,7 @@ import os
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
 
+
 SERVER_HOST = "gentlecomet.com"
 ASR_PORT = 5050
 TTS_PORT = 5051
@@ -99,10 +100,10 @@ class VoicePrint:
 
         # TODO: load tag2name from file
 
-        self.tag2name = {'test0': '路人甲', 'test1': '张三', 'test2': '王大力'}
+        self.tag2name = {'test0': '路人甲', 'test1': '张三', 'test2': '王大力','lwh':"刘伟恒"}
 
     @staticmethod
-    def get_fileid(file_path, text='12345678'):
+    def get_fileid_bin(wav_data, text='12345678'):
         '''
 
         :param file_path:
@@ -111,7 +112,7 @@ class VoicePrint:
         '''
 
         API = 'api/file/upload'
-        file_name = os.path.basename(file_path)
+        # file_name = os.path.basename(file_path)
         headers = {
             'x-app-id': VPR_APP_ID,
             'x-app-secret': VPR_APP_SECRET,
@@ -127,7 +128,7 @@ class VoicePrint:
             "asr_model": "susie-number-16k",
             "action_type": "0",
             "info": [{
-                "name": file_name,
+                "name": 'wake.wav',
                 "text": text
             }]
         }
@@ -135,7 +136,7 @@ class VoicePrint:
         multipart_encoder = MultipartEncoder(
             fields={
                 'content': json.dumps(content),
-                'file0': (file_name, open(file_path, 'rb'), 'audio/wav')
+                'file0': ('wake.wav', wav_data, 'audio/wav')
             },
             boundary='123456'
         )
@@ -183,6 +184,7 @@ class VoicePrint:
         response = requests.post(url=VPR_URL + API, data=json.dumps(content), headers=headers, verify=False).json()
         if response['flag'] and not response['error']:
             if len(response['data']) != 0:
+                print(response)
                 top_tag, top_score = response['data'][0].values()
                 print(top_tag,top_score)
                 return top_tag, top_score
@@ -193,8 +195,8 @@ class VoicePrint:
             print(response['error'])
             raise Exception
 
-    def get_spk_name(self, wav_file_path):
-        file_id = self.get_fileid(wav_file_path)
+    def get_spk_name(self, wav_data):
+        file_id = self.get_fileid_bin(wav_data)
         top_tag, top_score = self.verify_vpr(file_id, tag='', group=VPR_GROUP)
 
         if top_tag in self.tag2name.keys():
