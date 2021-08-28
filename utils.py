@@ -94,6 +94,9 @@ EN_ZH_MAPPING = {
     "projector": "投影仪",
     "tap": "水龙头",
     "whiteboard": "白板",
+}
+
+COLOR_MAPPING = {
     "green": "绿色",
     "red": "红色",
     "purple": "紫色",
@@ -101,12 +104,6 @@ EN_ZH_MAPPING = {
     "yellow": "黄色",
     "blue": "蓝色",
     "white": "白色"
-}
-
-SYNONYM = {
-    "杯子": ("水杯", "茶杯", "咖啡杯"),
-    "水壶": ("茶壶", "烧水壶"),
-    "桌子": ("餐桌",)
 }
 
 TEST_INFO = '[{"category": "kettle", "color": "black", "on": "dining table", "near": "coffee machine"},\
@@ -117,30 +114,71 @@ TEST_INFO = '[{"category": "kettle", "color": "black", "on": "dining table", "ne
 def visual_to_sentence(query, info):
     intent, query_category, query_color, query_on, query_near = [query[i] for i in
                                                                  ("intent", "object", "color", "on", "near")]
-
     objects = json.loads(info)
-    for obj in objects:
-        category, color, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None
-                                     for i in ("category", "color", "on", "near")]
 
-        if (category == query_category or category in SYNONYM.keys() and query_category in SYNONYM[category]) \
-                and (not query_color or color == query_color):
-            sentence = category
-            if intent == "ask_object_position":
+    if not query_category:
+        return "对不起，我没听清楚您的问题。"
+
+    if intent == "ask_object_position":
+        # sequentially search a object that match query
+        for obj in objects:
+            category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
+            color = COLOR_MAPPING[obj["color"]] if obj["color"] else None
+
+            if query_category == category:
+                sentence = category
                 if on:
                     sentence += f"在{on}上，"
                 if near:
                     sentence += f"在{near}旁边，"
-                if query_color:
+                if query_color and query_color == color:
                     sentence = f"{color}的" + sentence
                 elif color:
-                    sentence = sentence + f"它是{color}的，"
-            elif intent == "ask_object_color":
-                sentence += f"是{color}的。"
+                    sentence = sentence + f"它是{color}的。"
 
-            return sentence
+                return sentence
 
-    return f"没有看到{query_color if query_color else ''}{query_category}。"
+        # no object match query
+        if query_color:
+            return f"抱歉，我没有看到{query_color}的{query_category}。"
+        else:
+            return f"抱歉，我没有看到{query_category}。"
+
+    elif intent == "ask_object_color":
+        for obj in objects:
+            category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
+            color = COLOR_MAPPING[obj["color"]] if obj["color"] else None
+
+            if query_category == category:
+                if color:
+                    return f"{query_category}是{color}的。"
+                else:
+                    return f"抱歉，我看不出来{query_category}是什么颜色。"
+
+        return f"抱歉，我没有看到{query_category}。"
+
+    elif intent == "ask_object_quantity":
+        counter = 0
+        for obj in objects:
+            category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
+            color = COLOR_MAPPING[obj["color"]] if obj["color"] else None
+
+            if query_category == category and (not query_color or query_color == color):
+                counter += 1
+
+        if counter == 0:
+            if query_color:
+                return f"抱歉，我没有看到{query_color}的{query_category}。"
+            else:
+                return f"抱歉，我没有看到{query_category}。"
+        else:
+            if query_color:
+                return f"{query_color}的{query_category}有{counter}个。"
+            else:
+                return f"{query_category}有{counter}个。"
+
+    else:
+        return "对不起，我暂时无法回答这个问题。"
 
 
 def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
