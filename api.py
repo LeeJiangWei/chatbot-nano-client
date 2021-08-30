@@ -5,6 +5,7 @@ import zipfile
 import os
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
+import time
 
 
 SERVER_HOST = "gentlecomet.com"
@@ -52,13 +53,14 @@ class ASRFSM:
 
 def wav_bin_to_str(wav_data: bytes) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((SERVER_HOST, ASR_PORT))
-
+    # sock.connect((SERVER_HOST, ASR_PORT))
+    sock.connect(('localhost',5050))
     buffer = ""
 
     fsm = ASRFSM()
-
+    start=time.time()
     sock.send(wav_data)
+    sock.shutdown(socket.SHUT_WR)
     received_byte = sock.recv(2048)
     received_str = str(received_byte, encoding="utf-8")
     words = list(received_str)
@@ -74,6 +76,7 @@ def wav_bin_to_str(wav_data: bytes) -> str:
             elif state == 'end':
                 buffer = buffer.replace(" ", "")
                 sock.close()
+                print(buffer,time.time()-start)
                 return buffer
 
         received_byte = sock.recv(2048)
