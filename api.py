@@ -8,6 +8,7 @@ import requests
 
 
 SERVER_HOST = "gentlecomet.com"
+ASR_SERVER_HOST='222.201.137.105'
 ASR_PORT = 5050
 TTS_PORT = 5051
 RASA_PORT = 5005
@@ -19,7 +20,7 @@ TTS_URL = "http://{}:{}/binary".format(SERVER_HOST, TTS_PORT)
 VPR_APP_ID = '4a2b422c5f744f7dbf3d46db56d0f18c'
 VPR_APP_SECRET = '0d0003a3a6cb4ccaaa7582c5273b2298'
 VPR_URL = 'https://test.finvoice.voiceaitech.com/vprc/'
-VPR_GROUP = 'group.test_dxx'
+VPR_GROUP = 'group.demo'
 
 
 class ASRFSM:
@@ -52,13 +53,14 @@ class ASRFSM:
 
 def wav_bin_to_str(wav_data: bytes) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((SERVER_HOST, ASR_PORT))
+    sock.connect((ASR_SERVER_HOST, ASR_PORT))
 
     buffer = ""
 
     fsm = ASRFSM()
 
     sock.send(wav_data)
+    sock.shutdown(socket.SHUT_WR)
     received_byte = sock.recv(2048)
     received_str = str(received_byte, encoding="utf-8")
     words = list(received_str)
@@ -98,9 +100,7 @@ def str_to_wav_bin(input_str: str) -> bytes:
 class VoicePrint:
     def __init__(self):
 
-        # TODO: load tag2name from file
-
-        self.tag2name = {'test0': '路人甲', 'test1': '张三', 'test2': '王大力','lwh':"刘伟恒"}
+        self.tag2name = json.load(open("./spk_name.json"))
 
     @staticmethod
     def get_fileid_bin(wav_data, text='12345678'):
@@ -189,8 +189,8 @@ class VoicePrint:
                 print(top_tag,top_score)
                 return top_tag, top_score
             else:
-                print("Unregister VoicePrint")
-                return "stranger", 0.0
+                print("Unregistered VoicePrint")
+                return "unknown", 0.0
         else:
             print(response['error'])
             raise Exception
@@ -202,4 +202,4 @@ class VoicePrint:
         if top_tag in self.tag2name.keys():
             return self.tag2name[top_tag]
         else:
-            return "客人"
+            return self.tag2name['unknown']

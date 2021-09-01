@@ -222,24 +222,22 @@ def delete_vpr(tags, group):
 
 
 if __name__ == '__main__':
-    GROUP = 'group.test_dxx'
+    GROUP = 'group.demo'
     if not exists_group(GROUP):
         create_group(GROUP)
-
-    # #
-    # wav_list=[line.split()[1] for line in open("wav.txt").readlines()]
-    # tag2wav=[line.split() for line in open("tags.txt").readlines()]
     #
+    # #
+    vpr_path="/home/ryanliu/Downloads/声纹"
+    spk_dir=os.listdir(vpr_path)
     # ### register
     # #
-    # for i,t2w in enumerate(tag2wav):
-    #     file_id=[]
-    #     for j in range(1,len(t2w)):
-    #         file_id.append(get_fileid(os.path.join('dxx2',wav_list[int(t2w[j])]+'.wav')))
-    #
-    #     register_vpr(file_id, t2w[0], GROUP)
+    # for spk in spk_dir:
+    #     wav_list=os.listdir(os.path.join(vpr_path,spk))
+    #     file_ids=[]
+    #     for wav in wav_list:
+    #         file_ids.append(get_fileid(os.path.join(vpr_path,spk,wav)))
+    #     register_vpr(file_ids,tag=spk,group=GROUP)
 
-
-    test_file='dxx2/cyx_10.wav'
+    test_file=os.path.join(vpr_path,'zlk','dxx1.wav')
     test_file_id=get_fileid(test_file)
     verify_vpr(test_file_id,'',GROUP)

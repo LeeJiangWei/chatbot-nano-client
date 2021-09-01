@@ -13,7 +13,7 @@ import soundfile
 import classifier
 from audiohandler import Listener, Recorder, Player
 from utils import get_response, TEST_INFO
-from api import VoicePrint
+from api import VoicePrint,str_to_wav_bin
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -127,9 +127,9 @@ def main():
             listener.stop()
 
             spk_name=vpr.get_spk_name(wav_data)
-            print(spk_name)
+            wav=str_to_wav_bin(spk_name+'你好!')
 
-            player.play_wav("./sounds/response.wav")
+            player.play(wav)
 
             # interact loop
             while True:
