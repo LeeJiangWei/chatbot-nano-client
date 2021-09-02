@@ -1,0 +1,3 @@
+[submodule "vision_perception"]
+	path = vision_perception
+	url = git@github.com:aragakiyui611/socket_python.git
