@@ -13,6 +13,7 @@ import soundfile
 import classifier
 from audiohandler import Listener, Recorder, Player
 from utils import get_response, TEST_INFO
+from api import VoicePrint,str_to_wav_bin
 from vision_perception import VisionPerception
 
 
