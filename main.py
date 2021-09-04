@@ -20,7 +20,7 @@ CHANNELS = 1
 RATE = 16000
 LISTEN_SECONDS = 1
 TOPK = 1
-EXPECTED_WORD = "dxx"
+EXPECTED_WORD = "miya"
 
 W_SMOOTH = 5
 W_MAX = 10
@@ -37,8 +37,8 @@ logger.addHandler(handler)
 
 
 def main():
-    classifier.load_graph("./models/CRNN_dxx.pb")
-    labels = classifier.load_labels("./models/CRNN_labels.txt")
+    classifier.load_graph("./models/CRNN_mia2.pb")
+    labels = classifier.load_labels("./models/CRNN_mia2_labels.txt")
 
     listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
     recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
