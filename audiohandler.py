@@ -118,9 +118,9 @@ class Recorder:
                 exit_count = 0
                 if not vad_flags:
                     stop_count += 1
-                    exit_count += 1
 
-            if exit_count > 100 or stop_count > 15:
+
+            if exit_count > 160 or stop_count > 15:
                 break
 
             # if len(self.buffer) > buffer_window_len and rms < silence_threshold:

@@ -8,10 +8,18 @@ import numpy as np
 import pyaudio
 import tensorflow as tf
 from matplotlib import cm
+import soundfile
 
 import classifier
 from audiohandler import Listener, Recorder, Player
 from utils import get_response, TEST_INFO
+from api import VoicePrint,str_to_wav_bin
+from vision_perception import VisionPerception
+
+
+HOST = '222.201.134.203'
+PORT = 17000
+perception = VisionPerception(HOST, PORT)
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -43,6 +51,7 @@ def main():
     listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
     recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
     player = Player()
+    vpr = VoicePrint()
 
     with tf.Session() as sess:
         # main loop
@@ -54,6 +63,8 @@ def main():
 
             listener.listen()
             # keyword spotting loop
+
+
             while not (smooth_pred == EXPECTED_WORD and confidence > 0.5):
                 frames = listener.buffer[:int(RATE / CHUNK_LENGTH * LISTEN_SECONDS)]
 
@@ -118,9 +129,13 @@ def main():
                 else:
                     logger.info('predict: %s (score = %.5f)  smooth: %s (score = %.5f)  confidence = %.5f' % (
                         pred, pred_score, smooth_pred, smooth_score, confidence))
-
+            perception.send_single_image()
             listener.stop()
-            player.play_wav("./sounds/response.wav")
+
+            spk_name=vpr.get_spk_name(wav_data)
+            wav=str_to_wav_bin(spk_name+'你好!')
+
+            player.play(wav)
 
             # interact loop
             while True:
