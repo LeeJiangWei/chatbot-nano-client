@@ -8,7 +8,6 @@ import numpy as np
 import pyaudio
 import tensorflow as tf
 from matplotlib import cm
-import soundfile
 
 import classifier
 from audiohandler import Listener, Recorder, Player
@@ -63,7 +62,6 @@ def main():
 
             listener.listen()
             # keyword spotting loop
-
 
             while not (smooth_pred == EXPECTED_WORD and confidence > 0.5):
                 frames = listener.buffer[:int(RATE / CHUNK_LENGTH * LISTEN_SECONDS)]
@@ -163,6 +161,10 @@ def main():
                 for r, w in zip(response_list, wav_list):
                     logger.info(r)
                     player.play(w)
+
+                # haven't said anything but pass VAD.
+                if len(recognized_str) == 0:
+                    break
 
 
 if __name__ == '__main__':
