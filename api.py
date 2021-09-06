@@ -93,7 +93,10 @@ def question_to_answer(message: str, sender: str = "nano"):
 
 
 def str_to_wav_bin(input_str: str) -> bytes:
-    r = requests.post(TTS_URL, json={"text": input_str})
+    base_url = "http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed=5.8&update=1&access_token=default&domain=1" \
+               "&language=zh&voice_name=Jingjingcc&&text= "
+    r = requests.get(base_url + input_str)
+    # r = requests.post(TTS_URL, json={"text": input_str})
     return r.content
 
 
