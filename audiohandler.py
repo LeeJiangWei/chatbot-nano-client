@@ -3,6 +3,7 @@ import audioop
 import pyaudio
 from tqdm import tqdm
 import webrtcvad
+import time
 
 
 class Listener:
@@ -134,7 +135,7 @@ class Recorder:
 
 
 class Player:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=22050):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=8000):
         # should match TTS module
         self.pformat = pformat
         self.channels = channels
@@ -150,7 +151,10 @@ class Player:
                                  channels=self.channels,
                                  rate=self.rate,
                                  output=True)
+        # stream.start_stream()
         stream.write(data)
+        # to solve the suddenly cut off of audio
+        time.sleep(stream.get_output_latency())
         stream.stop_stream()
         stream.close()
 
