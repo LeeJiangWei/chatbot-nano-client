@@ -13,12 +13,12 @@ import classifier
 from audiohandler import Listener, Recorder, Player
 from utils import get_response, TEST_INFO
 from api import VoicePrint,str_to_wav_bin
-from vision_perception import VisionPerception
+#from vision_perception import VisionPerception
 
 
 HOST = '222.201.134.203'
 PORT = 17000
-perception = VisionPerception(HOST, PORT)
+#perception = VisionPerception(HOST, PORT)
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -127,7 +127,7 @@ def main():
                 else:
                     logger.info('predict: %s (score = %.5f)  smooth: %s (score = %.5f)  confidence = %.5f' % (
                         pred, pred_score, smooth_pred, smooth_score, confidence))
-            perception.send_single_image()
+            #perception.send_single_image()
             listener.stop()
 
             spk_name=vpr.get_spk_name(wav_data)
@@ -158,13 +158,14 @@ def main():
                 logger.info("Waiting server...")
                 recognized_str, response_list, wav_list = get_response(wav_data, TEST_INFO)
                 logger.info("Recognize result: " + recognized_str)
+
+                # haven't said anything but pass VAD.
+                if len(recognized_str) == 0 or recognized_str=="退下":
+                    break
                 for r, w in zip(response_list, wav_list):
                     logger.info(r)
                     player.play(w)
 
-                # haven't said anything but pass VAD.
-                if len(recognized_str) == 0:
-                    break
 
 
 if __name__ == '__main__':

@@ -121,7 +121,7 @@ class Recorder:
                     stop_count += 1
 
 
-            if exit_count > 160 or stop_count > 15:
+            if exit_count > 400 or stop_count > 30:
                 break
 
             # if len(self.buffer) > buffer_window_len and rms < silence_threshold:
@@ -168,6 +168,22 @@ class Player:
             stream.write(wf.readframes(wf.getnframes()))
             stream.stop_stream()
             stream.close()
+
+    def play_wav2(self, path):
+        with wave.open(path) as wf:
+            stream = self.audio.open(format=
+                                     self.audio.get_format_from_width(wf.getsampwidth()),
+                                     channels=wf.getnchannels(),
+                                     rate=wf.getframerate(),
+                                     output=True,
+									 stream_callback=self.__callback)
+            stream.write(wf.readframes(wf.getnframes()))
+            stream.stop_stream()
+            stream.close()
+
+    def __callback(self, in_data, frame_count, time_info, status_flags):
+
+	    return None, pyaudio.paContinue
 
 
 if __name__ == '__main__':

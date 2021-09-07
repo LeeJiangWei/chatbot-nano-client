@@ -7,11 +7,11 @@ from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
 
 
-SERVER_HOST = "gentlecomet.com"
+SERVER_HOST = "222.201.134.203"
 ASR_SERVER_HOST='222.201.137.105'
 ASR_PORT = 5050
 TTS_PORT = 5051
-RASA_PORT = 5005
+RASA_PORT =17003
 
 RASA_URL = "http://{}:{}/webhooks/rest/webhook".format(SERVER_HOST, RASA_PORT)
 TTS_URL = "http://{}:{}/binary".format(SERVER_HOST, TTS_PORT)
