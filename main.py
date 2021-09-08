@@ -13,12 +13,14 @@ import classifier
 from audiohandler import Listener, Recorder, Player
 from utils.utils import get_response, TEST_INFO
 from api import VoicePrint,str_to_wav_bin
-#from vision_perception import VisionPerception
-
+from vision_perception import VisionPerception
+from vision_perception.client_for_voice import Info_obtainer
 
 HOST = '222.201.134.203'
 PORT = 17000
-#perception = VisionPerception(HOST, PORT)
+perception = VisionPerception(HOST, PORT)
+PORT_INFO = 17001
+I = Info_obtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -127,11 +129,11 @@ def main():
                 else:
                     logger.info('predict: %s (score = %.5f)  smooth: %s (score = %.5f)  confidence = %.5f' % (
                         pred, pred_score, smooth_pred, smooth_score, confidence))
-            #perception.send_single_image()
+            perception.send_single_image()
             listener.stop()
 
-            spk_name=vpr.get_spk_name(wav_data)
-            wav=str_to_wav_bin(spk_name+'你好!')
+            spk_name = vpr.get_spk_name(wav_data)
+            wav = str_to_wav_bin(spk_name + '你好!')
 
             player.play(wav)
 
@@ -160,8 +162,13 @@ def main():
                 logger.info("Recognize result: " + recognized_str)
 
                 # haven't said anything but pass VAD.
-                if len(recognized_str) == 0 or recognized_str=="退下":
+                if len(recognized_str) == 0 or "退下" in recognized_str:
                     break
+
+                data = {"require": "attribute"}
+                result = I.obtain(data)
+                print(result["attribute"], result["timestamp"])
+
                 for r, w in zip(response_list, wav_list):
                     logger.info(r)
                     player.play(w)
