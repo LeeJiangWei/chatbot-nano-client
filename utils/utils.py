@@ -1,5 +1,6 @@
 import api
 import json
+import time
 
 EN_ZH_MAPPING = {
     "person": "人",
@@ -237,9 +238,16 @@ def visual_to_sentence(query, info):
 def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     response_list, wav_data_list = [], []
 
-    recognized_str = api.wav_bin_to_str(wav_data)
-
+    t0=time.time()
+    # recognized_str = api.wav_bin_to_str(wav_data)
+    recognized_str = api.wav_bin_to_str_voiceai(wav_data)
+    if len(recognized_str) == 0 or "没事了" in recognized_str:
+        return recognized_str, None, None
+    t1=time.time()
+    print("recognition:",t1-t0)
     rasa_responses = api.question_to_answer(recognized_str)
+    t2=time.time()
+    print("rasa:", t2 - t1)
     for response in rasa_responses:
         if "text" in response.keys():
             text = response['text']
@@ -251,7 +259,8 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
         wav = api.str_to_wav_bin(text)
         response_list.append(text)
         wav_data_list.append(wav)
-
+    t3=time.time()
+    print("tts", t3 - t2)
     return recognized_str, response_list, wav_data_list
 
 

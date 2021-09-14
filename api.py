@@ -5,13 +5,17 @@ import zipfile
 import os
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
-
+import threading
 
 SERVER_HOST = "222.201.134.203"
 ASR_SERVER_HOST='222.201.137.105'
-ASR_PORT = 5050
+# ASR_SERVER_HOST = 'localhost' #kaldi, only for debuging
+ASR_PORT = 5050  # kaldi
 TTS_PORT = 5051
-RASA_PORT =17003
+RASA_PORT = 17003
+
+SAMPLE_RATE = 16000  # 8000|16000
+PAUSE_TIME = 200  # [50, 500]
 
 RASA_URL = "http://{}:{}/webhooks/rest/webhook".format(SERVER_HOST, RASA_PORT)
 TTS_URL = "http://{}:{}/binary".format(SERVER_HOST, TTS_PORT)
@@ -85,6 +89,58 @@ def wav_bin_to_str(wav_data: bytes) -> str:
     sock.close()
     buffer = buffer.replace(" ", "")
     return buffer
+
+
+def sender(wave_data: bytes, sock:socket.socket):
+    # Simulating real time says. Of course you can send the whole paragraph at once.
+    # 模拟实时聊天，不等一句话说完再发，而是连续发送，由服务端进行断句
+    sock.sendall(wave_data)
+    sock.shutdown(socket.SHUT_WR)
+    return
+
+
+def receive_as_generator(sock):
+    # To prevent sockets from sending sticky packets, \n is used here as a separator. e.g. {...}\n{...}\n
+    # 为了防止两个数据包粘在一起，在两个数据包中间加入一个\n
+    data = b''
+    while True:
+        content = sock.recv(1)
+        # print(content)
+        if content == b'\n':
+            yield data
+            data = b''
+        else:
+            data += content
+
+
+def wav_bin_to_str_voiceai(wav_data: bytes) -> str:
+    sock = socket.socket()
+    sock.connect(("125.217.235.84", 8635))
+    sock.send(json.dumps({'sample_rate': SAMPLE_RATE, 'pause_time': PAUSE_TIME}).encode('utf-8'))
+    config_result = sock.recv(1024)  # here will return back the message that is the result of configurature.
+    print(config_result[:-1])
+    try:
+        config_result = json.loads(config_result[:-1])
+    except:
+        print('data is wrong')
+        exit()
+    if 'success' not in config_result or config_result['success'] != 1:
+        print('configuration error. msg:' + str(config_result['msg']))
+        exit()
+
+    s = threading.Thread(target=sender, args=(wav_data, sock))
+    s.setDaemon(True)
+    s.start()
+
+    for msg in receive_as_generator(sock):
+        msg = json.loads(msg)
+        print(msg)
+        # is_final表示到达句子的末尾，此时的翻译结果是一整句的翻译结果，在is_final=False时，拿到的结果是不完整的
+        if msg['is_final']:
+            sock.close()
+            return msg['alternatives'][0]['transcript']
+
+    sock.close()
 
 
 def question_to_answer(message: str, sender: str = "nano"):
@@ -189,7 +245,7 @@ class VoicePrint:
             if len(response['data']) != 0:
                 print(response)
                 top_tag, top_score = response['data'][0].values()
-                print(top_tag,top_score)
+                print(top_tag, top_score)
                 return top_tag, top_score
             else:
                 print("Unregistered VoicePrint")
