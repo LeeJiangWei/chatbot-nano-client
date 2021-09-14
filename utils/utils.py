@@ -107,14 +107,13 @@ COLOR_MAPPING = {
     "white": "白色"
 }
 
-TEST_INFO = '[{"category": "kettle", "color": "black", "on": "dining table", "near": "coffee machine"},\
-{"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "projector"},\
-{"category": "tap", "color": "white", "on": "kitchen counter", "near": ""}]'
+TEST_INFO = '[{"category": "kettle", "color": "black", "on": "dining table", "near": "coffee machine", "material": ""},\
+{"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "projector", "material": "塑料或金属"},\
+{"category": "tap", "color": "white", "on": "kitchen counter", "near": "", "material": "塑料或金属"}]'
 
 
 def visual_to_sentence(query, info):
-    intent, query_category, query_color, query_on, query_near = [query[i] for i in
-                                                                 ("intent", "object", "color", "on", "near")]
+    intent, query_category, query_color = [query[i] for i in ("intent", "object", "color",)]
     objects = json.loads(info)
 
     if not query_category:
@@ -178,6 +177,60 @@ def visual_to_sentence(query, info):
             else:
                 return f"{query_category}有{counter}个。"
 
+    elif intent == "ask_object_material":
+        for obj in objects:
+            category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
+            material = obj["material"]
+            color = COLOR_MAPPING[obj["color"]] if obj["color"] else None
+
+            if query_category == category:
+                if query_color:
+                    if color and color == query_color:
+                        if material:
+                            return f"{query_color}的{query_category}是{material}的。"
+                        else:
+                            return f"抱歉，我看不出来{query_color}的{query_category}是什么材料做的噢。"
+                    else:
+                        break
+                else:
+                    if material:
+                        return f"{query_category}是{material}的。"
+                    else:
+                        return f"抱歉，我看不出来{query_category}是什么材料做的噢。"
+
+        if query_color:
+            return f"抱歉，我没有看到{query_color}的{query_category}。"
+        else:
+            return f"抱歉，我没有看到{query_category}。"
+
+    elif intent == "list_whats_on":
+        on_objects = []
+        for obj in objects:
+            category, on = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on")]
+            if on == query_category:
+                on_objects.append(category)
+
+        if len(on_objects) > 0:
+            sentence = "".join([o + "，" for o in on_objects])
+            sentence = f"{query_category}上面的东西有，" + sentence[:-1] + "。"
+            return sentence
+        else:
+            return f"对不起，我不知道{query_category}上面有什么东西。"
+
+    elif intent == "list_whats_near":
+        near_objects = []
+        for obj in objects:
+            category, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "near")]
+            if near == query_category:
+                near_objects.append(category)
+
+        if len(near_objects) > 0:
+            sentence = "".join([o + "，" for o in near_objects])
+            sentence = f"{query_category}旁边的东西有，" + sentence[:-1] + "。"
+            return sentence
+        else:
+            return f"对不起，我不知道{query_category}旁边有什么东西。"
+
     else:
         return "对不起，我暂时无法回答这个问题。"
 
@@ -209,3 +262,13 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     t3=time.time()
     print("tts", t3 - t2)
     return recognized_str, response_list, wav_data_list
+
+
+if __name__ == '__main__':
+    test_query = {
+        "intent": "list_whats_near",
+        "object": "投影仪",
+        "color": ""
+    }
+    s = visual_to_sentence(test_query, TEST_INFO)
+    print(s)
