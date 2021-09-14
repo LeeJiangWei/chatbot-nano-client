@@ -4,7 +4,9 @@ import pyaudio
 from tqdm import tqdm
 import webrtcvad
 import time
+import multiprocessing
 
+CHUNK_LENGTH=1024
 
 class Listener:
     def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000, listen_seconds=1):
@@ -143,6 +145,10 @@ class Player:
 
         self.audio = pyaudio.PyAudio()
 
+        self.wav_data=None
+        self.wakeup_event=None
+        self.seek=0
+
     def __del__(self):
         self.audio.terminate()
 
@@ -151,10 +157,39 @@ class Player:
                                  channels=self.channels,
                                  rate=self.rate,
                                  output=True)
-        # stream.start_stream()
+        # interrupt
         stream.write(data)
         # to solve the suddenly cut off of audio
-        time.sleep(stream.get_output_latency())
+        time.sleep(stream.get_output_latency()*2)
+        stream.stop_stream()
+        stream.close()
+
+    def _callback(self, in_data, frame_count, time_info, status):
+        start = self.seek
+        self.seek += frame_count * pyaudio.get_sample_size(self.pformat)
+        if self.seek < len(self.wav_data):
+            print("call")
+            return self.wav_data[start:self.seek], pyaudio.paContinue
+        else:
+            return self.wav_data[start:], pyaudio.paContinue
+
+    def play_unblock(self, data, wakeup_event):
+        self.wav_data = data
+        self.wakeup_event = wakeup_event
+        self.seek = 0
+
+        stream = self.audio.open(format = self.pformat,
+                                 channels=self.channels,
+                                 rate=self.rate,
+                                 output=True,
+                                 frames_per_buffer=CHUNK_LENGTH,
+                                 stream_callback=self._callback)
+        stream.start_stream()
+        while stream.is_active():
+            if wakeup_event.is_set():
+                break
+            time.sleep(0.1)
+        time.sleep(stream.get_output_latency()*4)
         stream.stop_stream()
         stream.close()
 
@@ -169,23 +204,28 @@ class Player:
             stream.stop_stream()
             stream.close()
 
-    def play_wav2(self, path):
-        with wave.open(path) as wf:
-            stream = self.audio.open(format=
-                                     self.audio.get_format_from_width(wf.getsampwidth()),
-                                     channels=wf.getnchannels(),
-                                     rate=wf.getframerate(),
-                                     output=True,
-									 stream_callback=self.__callback)
-            stream.write(wf.readframes(wf.getnframes()))
-            stream.stop_stream()
-            stream.close()
-
-    def __callback(self, in_data, frame_count, time_info, status_flags):
-
-	    return None, pyaudio.paContinue
+    # def play_wav2(self, path):
+    #     with wave.open(path) as wf:
+    #         stream = self.audio.open(format=
+    #                                  self.audio.get_format_from_width(wf.getsampwidth()),
+    #                                  channels=wf.getnchannels(),
+    #                                  rate=wf.getframerate(),
+    #                                  output=True,
+    #                                  stream_callback=self.__callback)
+    #         stream.write(wf.readframes(wf.getnframes()))
+    #         stream.stop_stream()
+    #         stream.close()
+    #
+    # def __callback(self, in_data, frame_count, time_info, status_flags):
+    #
+    #     return None, pyaudio.paContinue
 
 
 if __name__ == '__main__':
-    recorder = Recorder()
-    buffer = recorder.record_auto()
+    player=Player(rate=16000)
+    with wave.open("./juice2.wav",'rb') as f:
+        wave_data= f.readframes(f.getnframes())
+    value = multiprocessing.Event()
+    player.play_unblock(wave_data, value)
+
+
