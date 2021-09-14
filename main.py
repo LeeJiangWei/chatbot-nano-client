@@ -14,13 +14,16 @@ import classifier
 from audiohandler import Listener, Recorder, Player, LSTENING, WAKEUP
 from utils.utils import get_response, TEST_INFO
 from api import VoicePrint, str_to_wav_bin
-# from vision_perception import VisionPerception
+from vision_perception import VisionPerception
+from vision_perception.client_for_voice import Info_obtainer
 from multiprocessing import Process, Value
 import multiprocessing
 
 HOST = '222.201.134.203'
 PORT = 17000
-# perception = VisionPerception(HOST, PORT)
+PORT_INFO = 17001
+perception = VisionPerception(HOST, PORT)
+I = Info_obtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -43,6 +46,62 @@ formatter = logging.Formatter(fmt='%(asctime)s - %(name)s - %(levelname)s - %(me
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+
+def interact_process(wakeup_event, is_playing, player_exit_event):
+    recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
+    player = Player()
+    while True:
+        print("Wait to be wakeup...")
+        wakeup_event.wait()
+        wakeup_event.clear()
+        while True:
+            is_playing.value = True
+            logger.info("Start recording...")
+            wav, _flags = recorder.record_auto()
+            logger.info("Stop recording.")
+            if not _flags:
+                logger.info("No sound detected, conversation canceled.")
+                break
+
+            if wakeup_event.is_set():
+                break
+
+            container = io.BytesIO()
+            wf = wave.open(container, 'wb')
+            wf.setnchannels(1)
+            wf.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
+            wf.setframerate(16000)
+            wf.writeframes(b''.join(wav))
+            wf.close()
+            container.seek(0)
+            wav_data = container.read()
+            logger.info("Waiting server...")
+            recognized_str, response_list, wav_list = get_response(wav_data, TEST_INFO)
+            logger.info("Recognize result: " + recognized_str)
+
+            # haven't said anything but pass VAD.
+            if len(recognized_str) == 0 or "没事了" in recognized_str:
+                break
+
+            if wakeup_event.is_set():
+                break
+
+            data = {"require": "attribute"}
+            result = I.obtain(data)
+            print(result["attribute"], result["timestamp"])
+
+            for r, w in zip(response_list, wav_list):
+                logger.info(r)
+                player.play_unblock(w, wakeup_event)
+                print("exit")
+
+            # interrupt
+            if wakeup_event.is_set():
+                break
+
+        player_exit_event.set()
+        is_playing.value = False
 
 
 def main():
@@ -136,7 +195,7 @@ def main():
                     # logger.info('predict: %s (score = %.5f)  smooth: %s (score = %.5f)  confidence = %.5f' % (
                     #     pred, pred_score, smooth_pred, smooth_score, confidence))
                     pass  # debug
-            # perception.send_single_image()
+            perception.send_single_image()
             listener.stop()
             print("WAKEUP!")
             spk_name = vpr.get_spk_name(wav_data)
@@ -152,59 +211,6 @@ def main():
 
             player_exit_event.clear()
             player.play(wav)
-
-
-def interact_process(wakeup_event, is_playing, player_exit_event):
-    recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
-    player = Player()
-    while True:
-        print("Wait to be wakeup...")
-        wakeup_event.wait()
-        wakeup_event.clear()
-        while True:
-            is_playing.value = True
-            logger.info("Start recording...")
-            wav, _flags = recorder.record_auto()
-            logger.info("Stop recording.")
-            if not _flags:
-                logger.info("No sound detected, conversation canceled.")
-                break
-
-            if wakeup_event.is_set():
-                break
-
-            container = io.BytesIO()
-            wf = wave.open(container, 'wb')
-            wf.setnchannels(1)
-            wf.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
-            wf.setframerate(16000)
-            wf.writeframes(b''.join(wav))
-            wf.close()
-            container.seek(0)
-            wav_data = container.read()
-            logger.info("Waiting server...")
-            recognized_str, response_list, wav_list = get_response(wav_data, TEST_INFO)
-            logger.info("Recognize result: " + recognized_str)
-
-            # haven't said anything but pass VAD.
-            if len(recognized_str) == 0 or "没事了" in recognized_str:
-                break
-
-            if wakeup_event.is_set():
-                break
-
-            for r, w in zip(response_list, wav_list):
-                logger.info(r)
-                player.play_unblock(w, wakeup_event)
-                print("exit")
-
-            # interrupt
-            if wakeup_event.is_set():
-                break
-
-        player_exit_event.set()
-        is_playing.value = False
-
 
 
 if __name__ == '__main__':
