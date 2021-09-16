@@ -203,6 +203,14 @@ def visual_to_sentence(query, info):
         else:
             return f"抱歉，我没有看到{query_category}。"
 
+    elif intent == "ask_object_function":
+        for obj in objects:
+            category, func = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "functions")]
+            if category == query_category:
+                return f"{query_category}可以用来{func}。"
+
+        return f"抱歉，我没有看到{query_category}，所以我不知道它有什么用。"
+
     elif intent == "list_whats_on":
         on_objects = []
         for obj in objects:
@@ -238,15 +246,15 @@ def visual_to_sentence(query, info):
 def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     response_list, wav_data_list = [], []
 
-    t0=time.time()
+    t0 = time.time()
     # recognized_str = api.wav_bin_to_str(wav_data)
     recognized_str = api.wav_bin_to_str_voiceai(wav_data)
     if len(recognized_str) == 0 or "没事了" in recognized_str:
         return recognized_str, None, None
-    t1=time.time()
-    print("recognition:",t1-t0)
+    t1 = time.time()
+    print("recognition:", t1 - t0)
     rasa_responses = api.question_to_answer(recognized_str)
-    t2=time.time()
+    t2 = time.time()
     print("rasa:", t2 - t1)
     for response in rasa_responses:
         if "text" in response.keys():
@@ -259,7 +267,7 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
         wav = api.str_to_wav_bin(text)
         response_list.append(text)
         wav_data_list.append(wav)
-    t3=time.time()
+    t3 = time.time()
     print("tts", t3 - t2)
     return recognized_str, response_list, wav_data_list
 
