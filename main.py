@@ -11,8 +11,8 @@ from matplotlib import cm
 import time
 
 import classifier
-from audiohandler import Listener, Recorder, Player, LSTENING, WAKEUP
-from utils.utils import get_response, TEST_INFO
+from audiohandler import Listener, Recorder, Player
+from utils.utils import get_response#, TEST_INFO
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
 from vision_perception.client_for_voice import Info_obtainer
@@ -77,7 +77,13 @@ def interact_process(wakeup_event, is_playing, player_exit_event):
             container.seek(0)
             wav_data = container.read()
             logger.info("Waiting server...")
-            recognized_str, response_list, wav_list = get_response(wav_data, TEST_INFO)
+            data = {"require": "attribute"}
+            result = I.obtain(data)
+            from pprint import pprint
+            pprint(result["attribute"])
+            print(result["timestamp"])
+
+            recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
             logger.info("Recognize result: " + recognized_str)
 
             # haven't said anything but pass VAD.
@@ -87,9 +93,6 @@ def interact_process(wakeup_event, is_playing, player_exit_event):
             if wakeup_event.is_set():
                 break
 
-            data = {"require": "attribute"}
-            result = I.obtain(data)
-            print(result["attribute"], result["timestamp"])
 
             for r, w in zip(response_list, wav_list):
                 logger.info(r)

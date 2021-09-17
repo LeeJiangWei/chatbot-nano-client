@@ -186,6 +186,7 @@ class Player:
                                  stream_callback=self._callback)
         stream.start_stream()
         while stream.is_active():
+            # 在播放音频的时候，每0.1s检测一次是否被唤醒，如果被唤醒则停止播音
             if wakeup_event.is_set():
                 break
             time.sleep(0.1)
