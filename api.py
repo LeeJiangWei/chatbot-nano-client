@@ -7,7 +7,8 @@ from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
 import threading
 
-SERVER_HOST = "222.201.134.203"
+# SERVER_HOST = "222.201.134.203"
+SERVER_HOST = "gentlecomet.com"
 ASR_SERVER_HOST='222.201.137.105'
 # ASR_SERVER_HOST = 'localhost' #kaldi, only for debuging
 ASR_PORT = 5050  # kaldi

@@ -107,9 +107,9 @@ COLOR_MAPPING = {
     "white": "白色"
 }
 
-# TEST_INFO = [{"category": "kettle", "color": "black", "on": "diningtable", "near": "coffee machine", "material": ""},\
-# {"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "projector", "material": "塑料或金属"},\
-# {"category": "tap", "color": "white", "on": "kitchen counter", "near": "", "material": "塑料或金属"}]
+TEST_INFO = [{"category": "kettle", "color": "black", "on": "diningtable", "near": "coffee machine", "material": ""},\
+{"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "projector", "material": "塑料或金属"},\
+{"category": "tap", "color": "white", "on": "kitchen counter", "near": "", "material": "塑料或金属"}]
 
 
 def visual_to_sentence(query, objects):
@@ -119,43 +119,65 @@ def visual_to_sentence(query, objects):
         return "对不起，我没听清楚您的问题。"
 
     if intent == "ask_object_position":
-        # sequentially search a object that match query
+        matched_objects = {"on": {}, "near": {}}
+        matched_num = 0
+
+        # sequentially search objects that match query
         for obj in objects:
             category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
-            color = obj["color"]
 
             if query_category == category:
-                print("obj:", obj)
-                sentence = category
+                matched_num += 1
                 if on:
-                    sentence += f"在{on}上，"
-                if near:
-                    sentence += f"在{near}旁边，"
-                if query_color and query_color == color:
-                    sentence = f"{color}的" + sentence
-                elif color:
-                    sentence = sentence + f"它是{color}的。"
+                    matched_objects["on"][on] = matched_objects["on"][on] + 1 if on in matched_objects[
+                        "on"].keys() else 1
+                elif near:
+                    matched_objects["near"][near] = matched_objects["near"][near] + 1 if near in matched_objects[
+                        "near"].keys() else 1
 
-                return sentence
+        if matched_num != 0:
+            object_description = ""
 
-        # no object match query
-        if query_color:
+            for o in matched_objects["on"].keys():
+                object_description += f"，在{o}上的有{matched_objects['on'][o]}个"
+
+            for n in matched_objects["near"].keys():
+                object_description += f"，在{n}上的有{matched_objects['near'][n]}个"
+
+            return f"有{matched_num}个{query_category}{object_description}。"
+        elif query_color:
             return f"抱歉，我没有看到{query_color}的{query_category}。"
         else:
             return f"抱歉，我没有看到{query_category}。"
 
     elif intent == "ask_object_color":
+        colors_of_matched = {}
+        unknown_num = 0
         for obj in objects:
             category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
             color = obj["color"]
 
             if query_category == category:
                 if color:
-                    return f"{query_category}是{color}的。"
+                    colors_of_matched[color] = colors_of_matched[color] + 1 if color in colors_of_matched.keys() else 1
                 else:
-                    return f"抱歉，我看不出来{query_category}是什么颜色。"
+                    unknown_num += 1
 
-        return f"抱歉，我没有看到{query_category}。"
+        matched_num = sum(list(colors_of_matched.values()))
+        if matched_num + unknown_num == 0:
+            return f"抱歉，我没有看到{query_category}。"
+        elif matched_num == 0:
+            return f"我看到了{matched_num + unknown_num}个{query_category}，但是我不认识它们的颜色。"
+        else:
+            color_descriptions = ""
+            for c in colors_of_matched.keys():
+                color_descriptions += f"，{c}的有{colors_of_matched[c]}个"
+
+            ret = f"有{matched_num + unknown_num}个{query_category}{color_descriptions}。"
+            if unknown_num > 0:
+                ret += f"还有{unknown_num}个不知道是啥颜色。"
+
+            return ret
 
     elif intent == "ask_object_quantity":
         counter = 0
@@ -274,8 +296,8 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
 
 if __name__ == '__main__':
     test_query = {
-        "intent": "list_whats_near",
-        "object": "投影仪",
+        "intent": "ask_object_position",
+        "object": "杯子",
         "color": ""
     }
     s = visual_to_sentence(test_query, TEST_INFO)

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import io
 import sys
 import wave
@@ -15,7 +16,7 @@ from audiohandler import Listener, Recorder, Player
 from utils.utils import get_response#, TEST_INFO
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
-from vision_perception.client_for_voice import Info_obtainer
+from vision_perception.client_for_voice import InfoObtainer
 from multiprocessing import Process, Value
 import multiprocessing
 
@@ -23,7 +24,7 @@ HOST = '222.201.134.203'
 PORT = 17000
 PORT_INFO = 17001
 perception = VisionPerception(HOST, PORT)
-I = Info_obtainer(HOST, PORT_INFO)
+I = InfoObtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -81,12 +82,19 @@ def interact_process(wakeup_event, is_playing, player_exit_event):
             result = I.obtain(data)
             from pprint import pprint
             pprint(result["attribute"])
-            print(result["timestamp"])
+            print("时间戳:", result["timestamp"])
+            # img = cv2.imread(perception.savepath)
+            # for attr in result["attribute"]:
+            #     # putText参数：np.ndarray, 文本左下角坐标(x, y), 字体, 文字缩放比例, (R, G, B), 厚度(不是高度)
+            #     cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, (0,255,0), thickness=2)
+            #     cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], (0,255,0), thickness=2)
+            # cv2.imwrite("tmp2.jpg", img)            
 
             recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
             logger.info("Recognize result: " + recognized_str)
 
             # haven't said anything but pass VAD.
+
             if len(recognized_str) == 0 or "没事了" in recognized_str:
                 break
 
@@ -199,6 +207,7 @@ def main():
                     #     pred, pred_score, smooth_pred, smooth_score, confidence))
                     pass  # debug
             perception.send_single_image()
+            I.reset()
             listener.stop()
             print("WAKEUP!")
             spk_name = vpr.get_spk_name(wav_data)
