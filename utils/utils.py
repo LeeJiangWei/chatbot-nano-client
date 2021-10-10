@@ -8,6 +8,7 @@ SYNONYM_TABLE = str.maketrans({
     "台版": "白板",
     "黑板选": "黑板刷",
     "一只": "椅子",
+    "停止": "瓶子",
 })
 
 EN_ZH_MAPPING = {
