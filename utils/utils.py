@@ -227,7 +227,8 @@ def visual_to_sentence(query, objects):
 
     elif intent == "ask_object_function":
         for obj in objects:
-            category, func = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "functions")]
+            category = EN_ZH_MAPPING[obj["category"]]
+            func = obj["function"]
             if category == query_category:
                 return f"{query_category}可以用来{func}。"
 
