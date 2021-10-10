@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import io
 import sys
 import wave
@@ -6,24 +7,24 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import pyaudio
+import cv2  # NOTE: 由于未知原因，先import cv2再import pyaudio会导致相机启动时报k4aException，所以这两行有先后顺序要求
 import tensorflow as tf
 from matplotlib import cm
 import time
 
 import classifier
-from audiohandler import Listener, Recorder, Player, LSTENING, WAKEUP
-from utils.utils import get_response, TEST_INFO
+from audiohandler import Listener, Recorder, Player
+from utils.utils import get_response#, TEST_INFO
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
-from vision_perception.client_for_voice import Info_obtainer
-from multiprocessing import Process, Value
-import multiprocessing
+from vision_perception.client_for_voice import InfoObtainer
+import multiprocessing as mp
 
 HOST = '222.201.134.203'
 PORT = 17000
 PORT_INFO = 17001
 perception = VisionPerception(HOST, PORT)
-I = Info_obtainer(HOST, PORT_INFO)
+I = InfoObtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30
 CHUNK_LENGTH = 1000
@@ -48,7 +49,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def interact_process(wakeup_event, is_playing, player_exit_event):
+def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
     recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
     player = Player()
     while True:
@@ -77,19 +78,31 @@ def interact_process(wakeup_event, is_playing, player_exit_event):
             container.seek(0)
             wav_data = container.read()
             logger.info("Waiting server...")
-            recognized_str, response_list, wav_list = get_response(wav_data, TEST_INFO)
+            data = {"require": "attribute"}
+            result = I.obtain(data, haddata.value)
+            haddata.value = True  # 获得过一次视觉信息之后，在下次重新唤醒之前就不需要重复获取了
+            from pprint import pprint
+            pprint(result["attribute"])
+            print("时间戳:", result["timestamp"])
+
+            img = cv2.imread(perception.savepath)
+            for attr in result["attribute"]:
+                # putText参数：np.ndarray, 文本左下角坐标(x, y), 字体, 文字缩放比例, (R, G, B), 厚度(不是高度)
+                cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, (0,255,0), thickness=2)
+                cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], (0,255,0), thickness=2)
+            cv2.imwrite("tmp2.jpg", img)
+
+            recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
             logger.info("Recognize result: " + recognized_str)
 
             # haven't said anything but pass VAD.
+
             if len(recognized_str) == 0 or "没事了" in recognized_str:
                 break
 
             if wakeup_event.is_set():
                 break
 
-            data = {"require": "attribute"}
-            result = I.obtain(data)
-            print(result["attribute"], result["timestamp"])
 
             for r, w in zip(response_list, wav_list):
                 logger.info(r)
@@ -105,11 +118,13 @@ def interact_process(wakeup_event, is_playing, player_exit_event):
 
 
 def main():
-    wakeup_event = multiprocessing.Event()
-    is_playing= multiprocessing.Value('i',0)
-    player_exit_event = multiprocessing.Event()
+    wakeup_event = mp.Event()
+    is_playing = mp.Value('i', 0)
+    player_exit_event = mp.Event()
+    haddata = mp.Value('i', False)  # 用于InfoObtainer的共享变量
 
-    inter_proc = Process(target=interact_process, args=(wakeup_event, is_playing, player_exit_event))
+    inter_proc = mp.Process(target=interact_process, args=(wakeup_event, is_playing, player_exit_event, haddata))
+    inter_proc.daemon = True  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
     inter_proc.start()
 
     classifier.load_graph("./models/CRNN_mia2.pb")
@@ -196,6 +211,7 @@ def main():
                     #     pred, pred_score, smooth_pred, smooth_score, confidence))
                     pass  # debug
             perception.send_single_image()
+            haddata.value = False  # False要求重新向视觉模块获取视觉信息
             listener.stop()
             print("WAKEUP!")
             spk_name = vpr.get_spk_name(wav_data)

@@ -129,7 +129,7 @@ def send_data(s, data):
     s.sendall(struct.pack(">L", size) + data)
 
 
-class Info_obtainer:
+class InfoObtainer:
     def __init__(self, host, port):
         self.host = host
         self.port = port
@@ -153,7 +153,7 @@ class Info_obtainer:
 
 
 if __name__ == "__main__":
-    I = Info_obtainer("222.201.134.203", 17001)
+    I = InfoObtainer("222.201.134.203", 17001)
 
     while True:
         data = {"require": "attribute"}

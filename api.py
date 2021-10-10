@@ -8,9 +8,11 @@ import requests
 import threading
 
 SERVER_HOST = "222.201.134.203"
-ASR_SERVER_HOST='222.201.137.105'
+# SERVER_HOST = "gentlecomet.com"
+# ASR_SERVER_HOST="222.201.137.105"
+ASR_SERVER_HOST="222.201.134.203"
 # ASR_SERVER_HOST = 'localhost' #kaldi, only for debuging
-ASR_PORT = 5050  # kaldi
+ASR_PORT = 15050  # kaldi. NOTE: 大学城是5050，五山由于防火墙，用的是15050
 TTS_PORT = 5051
 RASA_PORT = 17003
 

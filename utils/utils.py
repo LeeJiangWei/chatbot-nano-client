@@ -63,7 +63,7 @@ EN_ZH_MAPPING = {
     "sofa": "",
     "pottedplant": "盆栽",
     "bed": "",
-    "dining table": "桌子",
+    "diningtable": "桌子",
     "toilet": "",
     "tvmonitor": "",
     "laptop": "",
@@ -107,15 +107,13 @@ COLOR_MAPPING = {
     "white": "白色"
 }
 
-TEST_INFO = '[{"category": "kettle", "color": "black", "on": "dining table", "near": "coffee machine", "material": ""},\
+TEST_INFO = [{"category": "kettle", "color": "black", "on": "diningtable", "near": "coffee machine", "material": ""},\
 {"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "projector", "material": "塑料或金属"},\
-{"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "", "material": "塑料或金属"},\
-{"category": "cup", "color": "", "on": "projector", "near": "", "material": "塑料或金属"}]'
+{"category": "tap", "color": "white", "on": "kitchen counter", "near": "", "material": "塑料或金属"}]
 
 
-def visual_to_sentence(query, info):
+def visual_to_sentence(query, objects):
     intent, query_category, query_color = [query[i] for i in ("intent", "object", "color",)]
-    objects = json.loads(info)
 
     if not query_category:
         return "对不起，我没听清楚您的问题。"
@@ -157,7 +155,7 @@ def visual_to_sentence(query, info):
         unknown_num = 0
         for obj in objects:
             category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
-            color = COLOR_MAPPING[obj["color"]] if obj["color"] else None
+            color = obj["color"]
 
             if query_category == category:
                 if color:
@@ -185,7 +183,7 @@ def visual_to_sentence(query, info):
         counter = 0
         for obj in objects:
             category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
-            color = COLOR_MAPPING[obj["color"]] if obj["color"] else None
+            color = obj["color"]
 
             if query_category == category and (not query_color or query_color == color):
                 counter += 1
@@ -205,7 +203,7 @@ def visual_to_sentence(query, info):
         for obj in objects:
             category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
             material = obj["material"]
-            color = COLOR_MAPPING[obj["color"]] if obj["color"] else None
+            color = obj["color"]
 
             if query_category == category:
                 if query_color:
@@ -270,9 +268,9 @@ def visual_to_sentence(query, info):
 def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     response_list, wav_data_list = [], []
 
-    t0 = time.time()
-    # recognized_str = api.wav_bin_to_str(wav_data)
-    recognized_str = api.wav_bin_to_str_voiceai(wav_data)
+    t0=time.time()
+    recognized_str = api.wav_bin_to_str(wav_data)
+    # recognized_str = api.wav_bin_to_str_voiceai(wav_data)
     if len(recognized_str) == 0 or "没事了" in recognized_str:
         return recognized_str, None, None
     t1 = time.time()
