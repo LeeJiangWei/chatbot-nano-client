@@ -2,14 +2,14 @@ import api
 import json
 import time
 
-SYNONYM_TABLE = str.maketrans({
+SYNONYM_TABLE = {
     "鼻子": "杯子",
     "水浒": "水壶",
     "台版": "白板",
     "黑板选": "黑板刷",
     "一只": "椅子",
     "停止": "瓶子",
-})
+}
 
 EN_ZH_MAPPING = {
     "person": "人",
@@ -279,7 +279,11 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     response_list, wav_data_list = [], []
 
     t0 = time.time()
-    recognized_str = api.wav_bin_to_str(wav_data).translate(SYNONYM_TABLE)
+    recognized_str = api.wav_bin_to_str(wav_data)
+
+    for k, v in SYNONYM_TABLE.items():
+        recognized_str = recognized_str.replace(k, v)
+
     # recognized_str = api.wav_bin_to_str_voiceai(wav_data)
     if len(recognized_str) == 0 or "没事了" in recognized_str:
         return recognized_str, None, None
