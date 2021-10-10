@@ -14,7 +14,7 @@ import time
 
 import classifier
 from audiohandler import Listener, Recorder, Player
-from utils.utils import get_response#, TEST_INFO
+from utils.utils import get_response  # , TEST_INFO
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
 from vision_perception.client_for_voice import InfoObtainer
@@ -88,8 +88,9 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
             img = cv2.imread(perception.savepath)
             for attr in result["attribute"]:
                 # putText参数：np.ndarray, 文本左下角坐标(x, y), 字体, 文字缩放比例, (R, G, B), 厚度(不是高度)
-                cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, (0,255,0), thickness=2)
-                cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], (0,255,0), thickness=2)
+                cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 0),
+                            thickness=2)
+                cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], (0, 255, 0), thickness=2)
             cv2.imwrite("tmp2.jpg", img)
 
             recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
@@ -102,7 +103,6 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
 
             if wakeup_event.is_set():
                 break
-
 
             for r, w in zip(response_list, wav_list):
                 logger.info(r)
