@@ -235,7 +235,7 @@ class VoicePrint:
             "asr_model": "susie-number-16k",
             "asv_check": False,
             "asv_threshold": "0.7",
-            "threshold": "60.0",
+            "threshold": "10.0",
             "ext": False,
             "sorting": True,
             "top_n": 10,
@@ -245,7 +245,7 @@ class VoicePrint:
         response = requests.post(url=VPR_URL + API, data=json.dumps(content), headers=headers, verify=False).json()
         if response['flag'] and not response['error']:
             if len(response['data']) != 0:
-                print(response)
+                print("声纹识别结果：", response)
                 top_tag, top_score = response['data'][0].values()
                 print(top_tag, top_score)
                 return top_tag, top_score

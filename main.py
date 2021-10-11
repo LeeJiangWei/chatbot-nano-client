@@ -82,8 +82,10 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
             result = I.obtain(data, haddata.value)
             haddata.value = True  # 获得过一次视觉信息之后，在下次重新唤醒之前就不需要重复获取了
             from pprint import pprint
-            pprint(result["attribute"])
-            print("时间戳:", result["timestamp"])
+            with open("visual_info.txt", "w") as fp:
+                fp.write("时间戳:" + result["timestamp"] + "\n")
+                for item in result["attribute"]:
+                    fp.write(str(item) + "\n")
 
             img = cv2.imread(perception.savepath)
             for attr in result["attribute"]:
@@ -107,7 +109,6 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
             for r, w in zip(response_list, wav_list):
                 logger.info(r)
                 player.play_unblock(w, wakeup_event)
-                print("exit")
 
             # interrupt
             if wakeup_event.is_set():
