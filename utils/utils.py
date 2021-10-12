@@ -152,10 +152,10 @@ def visual_to_sentence(query, objects):
             object_description = ""
 
             for o in matched_objects["on"].keys():
-                object_description += f"，在{o}上的有{matched_objects["on"][o]}个"
+                object_description += f"，在{o}上的有{matched_objects['on'][o]}个"
 
             for n in matched_objects["near"].keys():
-                object_description += f"，在{n}旁边的有{matched_objects["near"][n]}个"
+                object_description += f"，在{n}旁边的有{matched_objects['near'][n]}个"
 
             return f"有{matched_num}个{query_category}{object_description}。"
         elif query_color:
