@@ -120,9 +120,9 @@ COLOR_MAPPING = {
     "white": "白色"
 }
 
-TEST_INFO = [{"category": "kettle", "color": "black", "on": "diningtable", "near": "coffee machine", "material": ""}, \
-             {"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "projector", "material": "塑料或金属"}, \
-             {"category": "cup", "color": "white", "on": "diningtable", "near": "", "material": "塑料或金属"}, \
+TEST_INFO = [{"category": "kettle", "color": "black", "on": "diningtable", "near": "coffee machine", "material": ""},
+             {"category": "cup", "color": "", "on": "kitchen counter", "near": "projector", "material": "塑料或金属"},
+             {"category": "cup", "color": "white", "on": "diningtable", "near": "", "material": "塑料或金属"},
              {"category": "cup", "color": "white", "on": "kitchen counter", "near": "", "material": "塑料或金属"}]
 
 
@@ -209,12 +209,17 @@ def visual_to_sentence(query, objects):
             return f"抱歉，我没有看到{query_category}。"
         elif matched_num == 0:
             return f"我看到了{matched_num + unknown_num}个{query_category}，但是我不认识它们的颜色。"
-        else:
-            color_descriptions = ""
+        elif len(colors_of_matched) == 1 and unknown_num == 0:
+            color_description = ""
             for c in colors_of_matched.keys():
-                color_descriptions += f"，{c}的有{colors_of_matched[c]}个"
+                color_description += f"它们都是{c}的"
+            return f"有{matched_num}个{query_category}，{color_description}。"
+        else:
+            color_description = ""
+            for c in colors_of_matched.keys():
+                color_description += f"，{c}的有{colors_of_matched[c]}个"
 
-            ret = f"有{matched_num + unknown_num}个{query_category}{color_descriptions}。"
+            ret = f"有{matched_num + unknown_num}个{query_category}{color_description}。"
             if unknown_num > 0:
                 ret += f"还有{unknown_num}个不知道是啥颜色。"
 
@@ -362,7 +367,7 @@ def bytes_to_wav_data(bytes_data, format=pyaudio.paInt16, channels=1, rate=16000
 
 if __name__ == "__main__":
     test_query = {
-        "intent": "ask_object_position",
+        "intent": "ask_object_color",
         "object": "杯子",
         "color": ""
     }
