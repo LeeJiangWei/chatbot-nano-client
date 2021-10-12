@@ -1,6 +1,10 @@
-import api
-import json
+import io
 import time
+import wave
+
+import pyaudio
+
+import api
 
 SYNONYM_TABLE = {
     "鼻子": "杯子",
@@ -148,10 +152,10 @@ def visual_to_sentence(query, objects):
             object_description = ""
 
             for o in matched_objects["on"].keys():
-                object_description += f"，在{o}上的有{matched_objects['on'][o]}个"
+                object_description += f"，在{o}上的有{matched_objects["on"][o]}个"
 
             for n in matched_objects["near"].keys():
-                object_description += f"，在{n}旁边的有{matched_objects['near'][n]}个"
+                object_description += f"，在{n}旁边的有{matched_objects["near"][n]}个"
 
             return f"有{matched_num}个{query_category}{object_description}。"
         elif query_color:
@@ -279,12 +283,12 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     response_list, wav_data_list = [], []
 
     t0 = time.time()
-    recognized_str = api.wav_bin_to_str(wav_data)
+    # recognized_str = api.wav_bin_to_str(wav_data)
 
-    for k, v in SYNONYM_TABLE.items():
-        recognized_str = recognized_str.replace(k, v)
+    # for k, v in SYNONYM_TABLE.items():
+    #     recognized_str = recognized_str.replace(k, v)
 
-    # recognized_str = api.wav_bin_to_str_voiceai(wav_data)
+    recognized_str = api.wav_bin_to_str_voiceai(wav_data)
     if len(recognized_str) == 0 or "没事了" in recognized_str:
         return recognized_str, None, None
     t1 = time.time()
@@ -294,9 +298,9 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     print("rasa:", t2 - t1)
     for response in rasa_responses:
         if "text" in response.keys():
-            text = response['text']
+            text = response["text"]
         elif "custom" in response.keys():
-            text = visual_to_sentence(response['custom'], visual_info)
+            text = visual_to_sentence(response["custom"], visual_info)
         else:
             text = ""
 
@@ -308,7 +312,29 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     return recognized_str, response_list, wav_data_list
 
 
-if __name__ == '__main__':
+def bytes_to_wav_data(bytes_data, format=pyaudio.paInt16, channels=1, rate=16000):
+    r"""Author: zhang.haojian 
+    给字节流数据加上wav文件头，成为完整的wav格式数据
+    Args:
+        bytes_data (bytes): input bytes data
+    Return:
+        wav_data (bytes): data that add wav format head
+    """
+    # 通过wave库将字节流写入文件中再读回来，数据中就有了wav格式头(比输入多44个字节)
+    # 借用io库的缓冲区，不实际写入文件读取文件，而是在缓冲区操作，速度更快
+    container = io.BytesIO()
+    with wave.open(container, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(pyaudio.get_sample_size(format))
+        wf.setframerate(rate)
+        wf.writeframes(bytes_data)
+    container.seek(0)
+    wav_data = container.read()
+
+    return wav_data
+
+
+if __name__ == "__main__":
     test_query = {
         "intent": "ask_object_position",
         "object": "杯子",

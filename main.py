@@ -1,33 +1,34 @@
 # -*- coding: utf-8 -*-
-import io
+import os
 import sys
-import wave
 import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pyaudio
 import cv2  # NOTE: 由于未知原因，先import cv2再import pyaudio会导致相机启动时报k4aException，所以这两行有先后顺序要求
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 把tensorflow的日志等级降低，不然输出一堆乱七八糟的东西
 import tensorflow as tf
 from matplotlib import cm
 import time
 
 import classifier
 from audiohandler import Listener, Recorder, Player
-from utils.utils import get_response  # , TEST_INFO
+from utils.utils import get_response, bytes_to_wav_data  # , TEST_INFO
+from utils.vision_utils import get_color_dict
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
 from vision_perception.client_for_voice import InfoObtainer
 import multiprocessing as mp
 
-HOST = '222.201.134.203'
+HOST = "222.201.134.203"
 PORT = 17000
 PORT_INFO = 17001
 perception = VisionPerception(HOST, PORT)
 I = InfoObtainer(HOST, PORT_INFO)
 
-RECORDER_CHUNK_LENGTH = 30
-CHUNK_LENGTH = 1000
+RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
+LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
@@ -40,6 +41,8 @@ W_MAX = 10
 
 PLOT = False
 
+BBOX_COLOR_DICT = get_color_dict()
+
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
 formatter = logging.Formatter(fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -48,8 +51,7 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-
-def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
+def interact_process(wakeup_event, is_playing, player_exit_event, all_exit_event, haddata):
     recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
     player = Player()
     while True:
@@ -59,29 +61,26 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
         while True:
             is_playing.value = True
             logger.info("Start recording...")
-            wav, _flags = recorder.record_auto()
+            wav_list, no_sound = recorder.record_auto()
             logger.info("Stop recording.")
-            if not _flags:
+            if no_sound:
                 logger.info("No sound detected, conversation canceled.")
                 break
 
             if wakeup_event.is_set():
+                wakeup_event.clear()
                 break
 
-            container = io.BytesIO()
-            wf = wave.open(container, 'wb')
-            wf.setnchannels(1)
-            wf.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
-            wf.setframerate(16000)
-            wf.writeframes(b''.join(wav))
-            wf.close()
-            container.seek(0)
-            wav_data = container.read()
+            wav_data = bytes_to_wav_data(b"".join(wav_list))
             logger.info("Waiting server...")
+
+            # perception.send_single_image()
+            # haddata.value = False  # False要求重新向视觉模块获取视觉信息
+            # time.sleep(0.1)  # 给视觉模块时间重置信息
             data = {"require": "attribute"}
             result = I.obtain(data, haddata.value)
             haddata.value = True  # 获得过一次视觉信息之后，在下次重新唤醒之前就不需要重复获取了
-            from pprint import pprint
+            
             with open("visual_info.txt", "w") as fp:
                 fp.write("时间戳:" + result["timestamp"] + "\n")
                 for item in result["attribute"]:
@@ -90,9 +89,9 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
             img = cv2.imread(perception.savepath)
             for attr in result["attribute"]:
                 # putText参数：np.ndarray, 文本左下角坐标(x, y), 字体, 文字缩放比例, (R, G, B), 厚度(不是高度)
-                cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 0),
+                cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, BBOX_COLOR_DICT[attr["category"]],
                             thickness=2)
-                cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], (0, 255, 0), thickness=2)
+                cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], BBOX_COLOR_DICT[attr["category"]], thickness=2)
             cv2.imwrite("tmp2.jpg", img)
 
             recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
@@ -102,8 +101,16 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
 
             if len(recognized_str) == 0 or "没事了" in recognized_str:
                 break
+            
+            # TODO: 把退出主程序的功能做好，现在没有实现预期功能
+            if recognized_str in ["退出。", "关机。"]:
+                print("退出互动环节...")
+                all_exit_event.set()
+                time.sleep(10)  # 坐等主进程退出
+                break
 
             if wakeup_event.is_set():
+                wakeup_event.clear()
                 break
 
             for r, w in zip(response_list, wav_list):
@@ -112,6 +119,7 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
 
             # interrupt
             if wakeup_event.is_set():
+                wakeup_event.clear()
                 break
 
         player_exit_event.set()
@@ -119,19 +127,28 @@ def interact_process(wakeup_event, is_playing, player_exit_event, haddata):
 
 
 def main():
+    r"""
+    时序图：─│┌┐└┘├┴┬┤┼╵
+                                                      ┌─没检测到唤醒词─────────────────────────────────────────────┐
+    初始阶段：main() ─── listener.listen()录制用户语音 ─┴─检测到唤醒词── 播放欢迎语 ─── wakeup_event.set() ─── 继续listener.listen()
+                                                                                │ 主进程可以在record_auto()结束时、播放语音前或者播放语音时通过说唤醒词退出互动阶段
+    互动阶段：wakeup_event.set() ─── 进入interact_process循环 ─── recorder.record_auto()录制用户语音 ─── 向视觉模块获取信息 ─── 结合视觉信息向语音模块获取回复的音频数据 ─── player.play_unblock()播放语音回复 ─── wakeup_event.clear()
+    """
     wakeup_event = mp.Event()
     is_playing = mp.Value('i', 0)
     player_exit_event = mp.Event()
+    all_exit_event = mp.Event()
     haddata = mp.Value('i', False)  # 用于InfoObtainer的共享变量
 
-    inter_proc = mp.Process(target=interact_process, args=(wakeup_event, is_playing, player_exit_event, haddata))
+
+    inter_proc = mp.Process(target=interact_process, args=(wakeup_event, is_playing, player_exit_event, all_exit_event, haddata))
     inter_proc.daemon = True  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
     inter_proc.start()
 
     classifier.load_graph("./models/CRNN_mia2.pb")
     labels = classifier.load_labels("./models/CRNN_mia2_labels.txt")
 
-    listener = Listener(FORMAT, CHANNELS, RATE, CHUNK_LENGTH, LISTEN_SECONDS)
+    listener = Listener(FORMAT, CHANNELS, RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
     player = Player()
     vpr = VoicePrint()
 
@@ -147,17 +164,8 @@ def main():
             # keyword spotting loop
             print("Listening...")
             while not (smooth_pred == EXPECTED_WORD and confidence > 0.5):
-                frames = listener.buffer[:int(RATE / CHUNK_LENGTH * LISTEN_SECONDS)]
-
-                container = io.BytesIO()
-                wf = wave.open(container, 'wb')
-                wf.setnchannels(CHANNELS)
-                wf.setsampwidth(pyaudio.get_sample_size(FORMAT))
-                wf.setframerate(RATE)
-                wf.writeframes(b''.join(frames))
-                wf.close()
-                container.seek(0)
-                wav_data = container.read()
+                frames = listener.buffer[-int(RATE / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):]
+                wav_data = bytes_to_wav_data(b"".join(frames), FORMAT, CHANNELS, RATE)
 
                 softmax_tensor = sess.graph.get_tensor_by_name("labels_softmax:0")
                 mfcc_tensor = sess.graph.get_tensor_by_name("Mfcc:0")
@@ -217,17 +225,23 @@ def main():
             print("WAKEUP!")
             spk_name = vpr.get_spk_name(wav_data)
 
-            wakeup_event.set()
             # wakeup
             if not is_playing.value:
                 wav = str_to_wav_bin(spk_name + '你好!')
             # interrupt
             elif is_playing.value:
+                wakeup_event.set()
                 wav = str_to_wav_bin("我在!")
                 player_exit_event.wait()
 
             player_exit_event.clear()
+            # 这里的play只负责播放欢迎语
             player.play(wav)
+            wakeup_event.set()
+
+            if all_exit_event.is_set():  # 正常退出，不使用ctrl+C退出，不然相机老是出幺蛾子
+                print("退出主程序。")
+                break
 
 
 if __name__ == '__main__':

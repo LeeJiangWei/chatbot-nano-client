@@ -8,9 +8,11 @@ from tqdm import tqdm
 import webrtcvad
 
 CHUNK_LENGTH = 1024
+RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
+LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
 
 class Listener:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000, listen_seconds=1):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=LISTENER_CHUNK_LENGTH, listen_seconds=1):
         # should match KWS module
         self.pformat = pformat
         self.channels = channels
@@ -19,7 +21,7 @@ class Listener:
         self.listen_seconds = listen_seconds
 
         self.audio = pyaudio.PyAudio()
-        self.buffer = [b'\x01' * chunk_length * pyaudio.get_sample_size(pformat)] * int(
+        self.buffer = [b"\x01" * chunk_length * pyaudio.get_sample_size(pformat) * self.channels] * int(
             rate / chunk_length) * listen_seconds * 2
 
     def __del__(self):
@@ -31,7 +33,9 @@ class Listener:
         return None, pyaudio.paContinue
 
     def listen(self):
-        self.buffer = [b'\x01' * self.chunk_length * pyaudio.get_sample_size(self.pformat)] * int(
+        # 维护一个缓存队列，每个元素是一个块chunk的音频数据，一共有n个，加起来刚好是listen_seconds秒的音频数据
+        # 每次回调函数都进行一次出列一次入列，队列中始终包含最近listen_seconds秒的音频数据
+        self.buffer = [b"\x01" * self.chunk_length * pyaudio.get_sample_size(self.pformat) * self.channels] * int(
             self.rate / self.chunk_length) * self.listen_seconds * 2
 
         self.stream = self.audio.open(format=self.pformat,
@@ -48,7 +52,15 @@ class Listener:
 
 
 class Recorder:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=RECORDER_CHUNK_LENGTH):
+        r"""
+        Args:
+            pformat: 音频样本点的数据类型
+            channels (int): 声道数
+            rate (int): 采样率，Hz
+            chunk_length (int): 一个块对应的时间长度(ms)
+        块长度取30ms是因为vad只支持帧长10ms，20ms和30ms
+        """
         # should match ASR module
         self.pformat = pformat
         self.channels = channels
@@ -62,6 +74,10 @@ class Recorder:
         self.audio.terminate()
 
     def record(self, record_seconds=3):
+        r"""根据给定的时间长度，录制一段音频
+        Args:
+            record_seconds (int): record time (second)
+        """
         self.buffer = []
         stream = self.audio.open(format=self.pformat,
                                  channels=self.channels,
@@ -79,6 +95,17 @@ class Recorder:
         return self.buffer
 
     def record_auto(self, silence_threshold=200, max_silence_second=1):
+        r"""根据外部环境的声音强度，智能录制有声音的片段。
+        连续收到start_thr个有声块(chunk)就认为有人声，开始正式录音（这start_thr个块的数据也会保留）；
+        开始录音后连续收到stop_thr个无声块就认为录音结束，退出录音；
+        在一次录音过程中累计收到超过exit_thr个无声块时认为本次录音全程静音，退出录音。
+        Args:
+            silence_threshold (int): deprecated
+            max_silence_second (int): deprecated
+        Return:
+            wav_list (list): 每个元素是一个块chunk的音频数据，wav_list[-1]是最近一个时刻录制的
+            no_sound (bool): True表示本次录制没有录到声音，False表示录到了声音
+        """
         self.buffer = []
         # width = pyaudio.get_sample_size(self.pformat)
         # buffer_window_len = int(self.rate / self.chunk_length * max_silence_second)
@@ -93,9 +120,11 @@ class Recorder:
         start_count = 0
         stop_count = 0
         exit_count = 0
+        start_thr = 10  # 300ms
+        stop_thr = 66  # 2s
+        exit_thr = 333  # 10s
         while True:
-            chunk = stream.read(int(self.chunk_length * self.rate / 1000))
-            # self.buffer.append(chunk)
+            chunk = stream.read(int(self.chunk_length * self.rate / 1000))  # 除以1000，把ms变成s
 
             # data = b''.join(self.buffer[-buffer_window_len:])
             # rms = audioop.rms(data, width)
@@ -104,27 +133,23 @@ class Recorder:
             vad_flags = vad.is_speech(chunk, sample_rate=self.rate)
 
             # ready
-            if start_count < 10:
+            if start_count < start_thr:
                 if vad_flags:
                     start_count += 1
-                    # print("listening")
                     self.buffer.append(chunk)
                     exit_count = max(0, exit_count - 1)
                 else:
                     self.buffer = []
-                    # print('sleeping..')
                     start_count = 0
                     exit_count += 1
             # start
             else:
-                # print('recording...')
                 self.buffer.append(chunk)
                 exit_count = 0
                 if not vad_flags:
                     stop_count += 1
 
-
-            if exit_count > 400 or stop_count > 30:
+            if exit_count > exit_thr or stop_count > stop_thr:
                 break
 
             # if len(self.buffer) > buffer_window_len and rms < silence_threshold:
@@ -134,7 +159,7 @@ class Recorder:
 
         stream.close()
 
-        return self.buffer, exit_count < 100
+        return self.buffer, exit_count >= exit_thr
 
 
 class Player:
@@ -232,7 +257,7 @@ class Player:
             stream.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     player = Player(rate=16000)
     with wave.open("./juice2.wav", "rb") as wf:
         wav_data = wf.readframes(wf.getnframes())

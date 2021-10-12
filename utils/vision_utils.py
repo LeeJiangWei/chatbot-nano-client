@@ -1,9 +1,11 @@
-import cv2
-import numpy as np
 import struct
 import pickle
-import socket
-import time
+import random
+
+import numpy as np
+import cv2
+
+from utils.utils import EN_ZH_MAPPING
 
 
 def img_preprocess(img0):
@@ -129,34 +131,14 @@ def send_data(s, data):
     s.sendall(struct.pack(">L", size) + data)
 
 
-class InfoObtainer:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
+def get_color_dict():
+    r"""Author: zhang.haojian
+    获取每种物体对应的颜色，用于可视化结果时给每个物体画框框
+    """
+    random.seed(0)
+    bbox_color_dict = {}
+    for key in EN_ZH_MAPPING:
+        color = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
+        bbox_color_dict[key] = color
 
-    def obtain(self, data):
-        while True:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.connect((self.host, self.port))
-                break
-            except Exception as e:
-                print(e, ": can't connect to server, retrying...")
-                time.sleep(1)
-                continue
-
-        send_data(s, data)
-        result = recv_data_and_load(s)
-        print("result", result)
-
-        return result
-
-
-if __name__ == "__main__":
-    I = InfoObtainer("222.201.134.203", 17001)
-
-    while True:
-        data = {"require": "attribute"}
-        result = I.obtain(data)
-        print(result)
-        time.sleep(2)
+    return bbox_color_dict

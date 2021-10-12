@@ -1,8 +1,6 @@
-import io
+import re
 import json
 import socket
-import zipfile
-import os
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
 import threading
@@ -106,8 +104,16 @@ def receive_as_generator(sock):
     # 为了防止两个数据包粘在一起，在两个数据包中间加入一个\n
     data = b''
     while True:
-        content = sock.recv(1)
-        # print(content)
+        try:
+            content = sock.recv(1)
+        except Exception as e:
+            if str(e) == "timed out":
+                # 当wav_data是无人声数据时，服务器没有识别到汉字，将不会返回任何信息，此时客户端需要自己结束这次连接
+                # 在超过timeout时长（目前为20s）后，sock将raise一个超时异常，本函数给出一个结束符，让外部循环结束连接
+                yield b'{"alternatives": [{"transcript": ""}], "is_final": true}'
+            else:
+                raise e
+
         if content == b'\n':
             yield data
             data = b''
@@ -117,17 +123,18 @@ def receive_as_generator(sock):
 
 def wav_bin_to_str_voiceai(wav_data: bytes) -> str:
     sock = socket.socket()
+    sock.settimeout(3)  # 3s内没有收到服务端的翻译结果就断开，作为当我们客户端发送噪声片段时的一个容错手段，防止一直阻塞在这里
     sock.connect(("125.217.235.84", 8635))
-    sock.send(json.dumps({'sample_rate': SAMPLE_RATE, 'pause_time': PAUSE_TIME}).encode('utf-8'))
+    sock.send(json.dumps({"sample_rate": SAMPLE_RATE, "pause_time": PAUSE_TIME}).encode("utf-8"))
     config_result = sock.recv(1024)  # here will return back the message that is the result of configurature.
     print(config_result[:-1])
     try:
         config_result = json.loads(config_result[:-1])
     except:
-        print('data is wrong')
+        print("data is wrong")
         exit()
-    if 'success' not in config_result or config_result['success'] != 1:
-        print('configuration error. msg:' + str(config_result['msg']))
+    if "success" not in config_result or config_result["success"] != 1:
+        print("configuration error. msg:" + str(config_result["msg"]))
         exit()
 
     s = threading.Thread(target=sender, args=(wav_data, sock))
@@ -138,9 +145,9 @@ def wav_bin_to_str_voiceai(wav_data: bytes) -> str:
         msg = json.loads(msg)
         print(msg)
         # is_final表示到达句子的末尾，此时的翻译结果是一整句的翻译结果，在is_final=False时，拿到的结果是不完整的
-        if msg['is_final']:
+        if msg["is_final"]:
             sock.close()
-            return msg['alternatives'][0]['transcript']
+            return msg["alternatives"][0]["transcript"]
 
     sock.close()
 
@@ -153,9 +160,14 @@ def question_to_answer(message: str, sender: str = "nano"):
 def str_to_wav_bin(input_str: str) -> bytes:
     base_url = "http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed=5.8&update=1&access_token=default&domain=1" \
                "&language=zh&voice_name=Jingjingcc&&text= "
-    r = requests.get(base_url + input_str)
-    # r = requests.post(TTS_URL, json={"text": input_str})
-    return r.content
+    # 当回答包括多个句子时（常见于闲聊模式），文本太长会导致对面返回空数据，所以我们要自己把数据分段发送
+    result = b""
+    for sentence in re.split("；|？|。|,|！|!", input_str):
+        if sentence:
+            r = requests.get(base_url + sentence)
+            # r = requests.post(TTS_URL, json={"text": input_str})
+            result += r.content
+    return result
 
 
 class VoicePrint:
@@ -173,7 +185,6 @@ class VoicePrint:
         '''
 
         API = 'api/file/upload'
-        # file_name = os.path.basename(file_path)
         headers = {
             'x-app-id': VPR_APP_ID,
             'x-app-secret': VPR_APP_SECRET,
@@ -193,7 +204,6 @@ class VoicePrint:
                 "text": text
             }]
         }
-        # files={'file0':open(file_path,'rb')}
         multipart_encoder = MultipartEncoder(
             fields={
                 'content': json.dumps(content),
@@ -247,7 +257,6 @@ class VoicePrint:
             if len(response['data']) != 0:
                 print("声纹识别结果：", response)
                 top_tag, top_score = response['data'][0].values()
-                print(top_tag, top_score)
                 return top_tag, top_score
             else:
                 print("Unregistered VoicePrint")
@@ -262,5 +271,5 @@ class VoicePrint:
 
         if top_tag in self.tag2name.keys():
             return self.tag2name[top_tag]
-        else:
+        else:  # 遇到不认识的都当做客人，后续可能会接入注册声纹的功能
             return self.tag2name['unknown']
