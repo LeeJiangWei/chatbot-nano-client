@@ -238,6 +238,7 @@ class Player:
             pass
 
         time.sleep(stream.get_output_latency() * 2)
+        # tx2开发板get_output_latency是0.256s
         stream.stop_stream()
         stream.close()
 

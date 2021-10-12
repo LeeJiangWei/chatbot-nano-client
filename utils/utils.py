@@ -324,12 +324,12 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     response_list, wav_data_list = [], []
 
     t0 = time.time()
-    # recognized_str = api.wav_bin_to_str(wav_data)
+    recognized_str = api.wav_bin_to_str(wav_data)
+    # recognized_str = api.wav_bin_to_str_voiceai(wav_data)
 
-    # for k, v in SYNONYM_TABLE.items():
-    #     recognized_str = recognized_str.replace(k, v)
+    for k, v in SYNONYM_TABLE.items():
+        recognized_str = recognized_str.replace(k, v)
 
-    recognized_str = api.wav_bin_to_str_voiceai(wav_data)
     if len(recognized_str) == 0 or "没事了" in recognized_str:
         return recognized_str, None, None
     t1 = time.time()
@@ -373,6 +373,15 @@ def bytes_to_wav_data(bytes_data, format=pyaudio.paInt16, channels=1, rate=16000
     wav_data = container.read()
 
     return wav_data
+
+
+def save_wav(wav_data, filepath, format=pyaudio.paInt16, channels=1, rate=16000):
+    r"""把二进制数据保存成wav文件（貌似保存下来的文件播放速度变快了）"""
+    with wave.open(filepath, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(pyaudio.get_sample_size(format))
+        wf.setframerate(rate)
+        wf.writeframes(wav_data)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import time
 import re
 import json
 import socket
@@ -179,14 +180,15 @@ class VoicePrint:
 
     @staticmethod
     def get_fileid_bin(wav_data, text='12345678'):
-        '''
+        '''上传音频数据，获取fileid
 
         :param file_path:
         :param text:  unimportant if asr_check=False
-        :return:
+        Return:
+            file_id (str): 32 bits id of file
         '''
 
-        API = 'api/file/upload'
+        upload_api = 'api/file/upload'
         headers = {
             'x-app-id': VPR_APP_ID,
             'x-app-secret': VPR_APP_SECRET,
@@ -202,10 +204,11 @@ class VoicePrint:
             "asr_model": "susie-number-16k",
             "action_type": "0",
             "info": [{
-                "name": 'wake.wav',
-                "text": text
+                "name": 'wake.wav',  # 音频数据在对端服务器上保存的文件名
+                "text": text  # 对该音频文件的描述文本
             }]
         }
+        # 使用multipart/form-data的方式传送正文数据时，数据需要先放进一个MultipartEncoder
         multipart_encoder = MultipartEncoder(
             fields={
                 'content': json.dumps(content),
@@ -214,7 +217,10 @@ class VoicePrint:
             boundary='123456'
         )
 
-        response = requests.post(url=VPR_URL + API, data=multipart_encoder, headers=headers, verify=False).json()
+        t1 = time.time()
+        response = requests.post(url=VPR_URL + upload_api, data=multipart_encoder, headers=headers, verify=False).json()
+        t2 = time.time()
+        print(f"获取fileid的时间为{t2 - t1:.2f}秒")
 
         return response['data']['info_list'][0]['id']
 
@@ -225,7 +231,7 @@ class VoicePrint:
         tag: string  if "",  verify 1:N
         group: string
         """
-        API = 'api/vpr/identify'
+        verify_api = 'api/vpr/identify'
 
         headers = {
             'x-app-id': VPR_APP_ID,
@@ -254,7 +260,10 @@ class VoicePrint:
             "file_id_list": file_id
         }
 
-        response = requests.post(url=VPR_URL + API, data=json.dumps(content), headers=headers, verify=False).json()
+        t2 = time.time()
+        response = requests.post(url=VPR_URL + verify_api, data=json.dumps(content), headers=headers, verify=False).json()
+        t3 = time.time()
+        print(f"获取声纹识别结果的时间为{t3 - t2:.2f}秒")
         if response['flag'] and not response['error']:
             if len(response['data']) != 0:
                 print("声纹识别结果：", response)
@@ -269,7 +278,7 @@ class VoicePrint:
 
     def get_spk_name(self, wav_data):
         file_id = self.get_fileid_bin(wav_data)
-        top_tag, top_score = self.verify_vpr(file_id, tag='', group=VPR_GROUP)
+        top_tag, top_score = self.verify_vpr(file_id, tag="", group=VPR_GROUP)
 
         if top_tag in self.tag2name.keys():
             return self.tag2name[top_tag]

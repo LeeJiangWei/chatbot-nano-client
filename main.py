@@ -2,6 +2,7 @@
 import os
 import sys
 import logging
+from PIL import Image, ImageDraw, ImageFont
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,7 +15,7 @@ import time
 
 import classifier
 from audiohandler import Listener, Recorder, Player
-from utils.utils import get_response, bytes_to_wav_data  # , TEST_INFO
+from utils.utils import get_response, bytes_to_wav_data, save_wav
 from utils.vision_utils import get_color_dict
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
@@ -86,20 +87,23 @@ def interact_process(wakeup_event, is_playing, player_exit_event, all_exit_event
                 for item in result["attribute"]:
                     fp.write(str(item) + "\n")
 
-            img = cv2.imread(perception.savepath)
+            img = Image.open(perception.savepath).convert("RGB")
+            drawer = ImageDraw.ImageDraw(img)
+            fontsize = 13
+            font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
             for attr in result["attribute"]:
-                # putText参数：np.ndarray, 文本左下角坐标(x, y), 字体, 文字缩放比例, (R, G, B), 厚度(不是高度)
-                cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, BBOX_COLOR_DICT[attr["category"]],
-                            thickness=2)
-                cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], BBOX_COLOR_DICT[attr["category"]], thickness=2)
-            cv2.imwrite("tmp2.jpg", img)
+                # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
+                # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+                drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
+                # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
+                drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
+            img.save("tmp2.jpg")
 
             recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
             logger.info("Recognize result: " + recognized_str)
 
             # haven't said anything but pass VAD.
-
-            if len(recognized_str) == 0 or "没事了" in recognized_str:
+            if len(recognized_str) == 0 or "没事了" in recognized_str or "没事" == recognized_str:
                 break
             
             # TODO: 把退出主程序的功能做好，现在没有实现预期功能
@@ -115,7 +119,9 @@ def interact_process(wakeup_event, is_playing, player_exit_event, all_exit_event
 
             for r, w in zip(response_list, wav_list):
                 logger.info(r)
-                player.play_unblock(w, wakeup_event)
+                # save_wav(w, "tmp.wav")
+                # player.play_unblock(w, wakeup_event)
+                player.play(w)
 
             # interrupt
             if wakeup_event.is_set():
@@ -152,7 +158,7 @@ def main():
     player = Player()
     vpr = VoicePrint()
 
-    with tf.Session() as sess:
+    with tf.compat.v1.Session() as sess:
         # main loop
         while True:
             history_probabilities = [np.zeros(len(labels)) for _ in range(W_SMOOTH)]
@@ -223,10 +229,12 @@ def main():
             haddata.value = False  # False要求重新向视觉模块获取视觉信息
             listener.stop()
             print("WAKEUP!")
-            spk_name = vpr.get_spk_name(wav_data)
 
             # wakeup
             if not is_playing.value:
+                t1 = time.time()
+                spk_name = vpr.get_spk_name(wav_data)
+                print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
                 wav = str_to_wav_bin(spk_name + '你好!')
             # interrupt
             elif is_playing.value:
