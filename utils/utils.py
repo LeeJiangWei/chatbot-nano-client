@@ -122,7 +122,8 @@ COLOR_MAPPING = {
 
 TEST_INFO = [{"category": "kettle", "color": "black", "on": "diningtable", "near": "coffee machine", "material": ""}, \
              {"category": "cup", "color": "yellow", "on": "kitchen counter", "near": "projector", "material": "塑料或金属"}, \
-             {"category": "tap", "color": "white", "on": "kitchen counter", "near": "", "material": "塑料或金属"}]
+             {"category": "cup", "color": "white", "on": "diningtable", "near": "", "material": "塑料或金属"}, \
+             {"category": "cup", "color": "white", "on": "kitchen counter", "near": "", "material": "塑料或金属"}]
 
 
 def visual_to_sentence(query, objects):
@@ -138,8 +139,10 @@ def visual_to_sentence(query, objects):
         # sequentially search objects that match query
         for obj in objects:
             category, on, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on", "near")]
+            color = obj["color"]
 
-            if query_category == category:
+            # query的物体出现在objects中 AND (query中未指定color OR query指定了color且与物体的color一致) 视为成功匹配
+            if query_category == category and (not query_color or query_color == color):
                 matched_num += 1
                 if on:
                     matched_objects["on"][on] = matched_objects["on"][on] + 1 if on in matched_objects[
@@ -148,20 +151,45 @@ def visual_to_sentence(query, objects):
                     matched_objects["near"][near] = matched_objects["near"][near] + 1 if near in matched_objects[
                         "near"].keys() else 1
 
-        if matched_num != 0:
+        if matched_num == 0:
+            if query_color:
+                return f"抱歉，我没有看到{query_color}的{query_category}。"
+            else:
+                return f"抱歉，我没有看到{query_category}。"
+        elif matched_num == 1:  # 匹配的物体只有一个，则不回复它的数量
             object_description = ""
-
             for o in matched_objects["on"].keys():
-                object_description += f"，在{o}上的有{matched_objects['on'][o]}个"
+                object_description += f"在{o}上"
 
             for n in matched_objects["near"].keys():
-                object_description += f"，在{n}旁边的有{matched_objects['near'][n]}个"
+                object_description += f"在{n}旁边"
 
-            return f"有{matched_num}个{query_category}{object_description}。"
-        elif query_color:
-            return f"抱歉，我没有看到{query_color}的{query_category}。"
+            if query_color:
+                return f"{query_color}的{query_category}{object_description}。"
+            else:
+                return f"{query_category}{object_description}。"
         else:
-            return f"抱歉，我没有看到{query_category}。"
+            object_description = ""
+            on_dict = matched_objects["on"]
+            near_dict = matched_objects["near"]
+
+            if len(on_dict) + len(near_dict) == 1:  # 所有物体都出现在同一个参照物的上面或旁边，就用总结性的句子
+                for o in on_dict.keys():
+                    object_description += f"，它们都在{o}上面"
+
+                for n in near_dict.keys():
+                    object_description += f"，它们都在{n}旁边"
+            else:  # 超过2个参照物，用排比的句子
+                for o in on_dict.keys():
+                    object_description += f"，在{o}上的有{matched_objects['on'][o]}个"
+
+                for n in near_dict.keys():
+                    object_description += f"，在{n}旁边的有{matched_objects['near'][n]}个"
+
+            if query_color:
+                return f"有{matched_num}个{query_color}的{query_category}{object_description}。"
+            else:
+                return f"有{matched_num}个{query_category}{object_description}。"
 
     elif intent == "ask_object_color":
         colors_of_matched = {}
@@ -248,30 +276,28 @@ def visual_to_sentence(query, objects):
         return f"抱歉，我没有看到{query_category}，所以我不知道它有什么用。"
 
     elif intent == "list_whats_on":
-        on_objects = []
+        on_objects = {}
         for obj in objects:
             category, on = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on")]
             if on == query_category:
-                on_objects.append(category)
+                on_objects[category] = on_objects[category] + 1 if on in on_objects.keys() else 1
 
         if len(on_objects) > 0:
-            sentence = "".join([o + "，" for o in on_objects])
-            sentence = f"{query_category}上面的东西有，" + sentence[:-1] + "。"
-            return sentence
+            sentence = "，".join([f"{on_num}个{on}" for on, on_num in on_objects.items()])
+            return f"{query_category}的上面有{sentence}。"
         else:
             return f"对不起，我不知道{query_category}上面有什么东西。"
 
     elif intent == "list_whats_near":
-        near_objects = []
+        near_objects = {}
         for obj in objects:
             category, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "near")]
             if near == query_category:
-                near_objects.append(category)
+                near_objects[category] = near_objects[category] + 1 if near in near_objects.keys() else 1
 
         if len(near_objects) > 0:
-            sentence = "".join([o + "，" for o in near_objects])
-            sentence = f"{query_category}旁边的东西有，" + sentence[:-1] + "。"
-            return sentence
+            sentence = "，".join([f"{near_num}个{near}" for near, near_num in near_objects.items()])
+            return f"{query_category}的旁边有{sentence}。"
         else:
             return f"对不起，我不知道{query_category}旁边有什么东西。"
 
