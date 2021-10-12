@@ -4,6 +4,8 @@ import socket
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
 import threading
+import urllib3
+urllib3.disable_warnings()
 
 SERVER_HOST = "222.201.134.203"
 # SERVER_HOST = "gentlecomet.com"

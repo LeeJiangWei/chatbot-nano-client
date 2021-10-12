@@ -7,13 +7,13 @@ import tensorflow as tf
 
 def load_labels(filename):
     """Read in labels, one label per line."""
-    return [line.rstrip() for line in tf.gfile.GFile(filename)]
+    return [line.rstrip() for line in tf.io.gfile.GFile(filename)]
 
 
 def load_graph(filename):
     """Unpersists graph from file as default graph."""
     with tf.gfile.FastGFile(filename, 'rb') as f:
-        graph_def = tf.GraphDef()
+        graph_def = tf.compat.v1.GraphDef()
         graph_def.ParseFromString(f.read())
         tf.import_graph_def(graph_def, name='')
 
