@@ -209,6 +209,8 @@ def visual_to_sentence(query, objects):
             return f"抱歉，我没有看到{query_category}。"
         elif matched_num == 0:
             return f"我看到了{matched_num + unknown_num}个{query_category}，但是我不认识它们的颜色。"
+        elif matched_num == 1:
+            return f"{query_category}是{list(colors_of_matched.keys())[0]}的。"
         elif len(colors_of_matched) == 1 and unknown_num == 0:
             color_description = ""
             for c in colors_of_matched.keys():
@@ -376,7 +378,7 @@ def bytes_to_wav_data(bytes_data, format=pyaudio.paInt16, channels=1, rate=16000
 if __name__ == "__main__":
     test_query = {
         "intent": "ask_object_color",
-        "object": "杯子",
+        "object": "水壶",
         "color": ""
     }
     s = visual_to_sentence(test_query, TEST_INFO)
