@@ -198,9 +198,17 @@ class Player:
 
     def _callback(self, in_data, frame_count, time_info, status):
         start = self.seek
-        self.seek += frame_count * pyaudio.get_sample_size(self.pformat) * self.channels
+        chunk_length = frame_count * pyaudio.get_sample_size(self.pformat) * self.channels
+        self.seek += chunk_length
+
+        data = self.wav_data[start: self.seek]
+        # 回调函数返回不完整的块chunk时，stream将不播放该块并结束回调的死循环，下面两行是专门处理音频的最后一个块的
+        if 0 < len(data) < chunk_length:
+            data += b"\x00" * (chunk_length - len(data))  # 补足chunk_length个字节
+
         self.play_frames += 1
-        return self.wav_data[start: self.seek], pyaudio.paContinue
+
+        return data, pyaudio.paContinue
 
     def play_unblock(self, wav_data, wakeup_event):
         r"""非阻塞地播放一个音频流，期间允许被打断

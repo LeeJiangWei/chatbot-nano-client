@@ -117,9 +117,8 @@ def interact_process(wakeup_event, is_playing, player_exit_event, all_exit_event
 
             for r, w in zip(response_list, wav_list):
                 logger.info(r)
-                # save_wav(w, "tmp.wav")
-                # player.play_unblock(w, wakeup_event)
-                player.play(w)
+                # save_wav(w, "tmp.wav", rate=player.rate)  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
+                player.play_unblock(w, wakeup_event)
 
             # interrupt
             if wakeup_event.is_set():
@@ -170,6 +169,7 @@ def main():
             haddata.value = False  # False要求重新向视觉模块获取视觉信息
             listener.stop()
             print("WAKEUP!")
+            # save_wav(b"".join(frames), "tmp.wav")  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
 
             # wakeup
             if not is_playing.value:

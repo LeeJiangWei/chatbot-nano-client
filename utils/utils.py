@@ -376,7 +376,14 @@ def bytes_to_wav_data(bytes_data, format=pyaudio.paInt16, channels=1, rate=16000
 
 
 def save_wav(wav_data, filepath, format=pyaudio.paInt16, channels=1, rate=16000):
-    r"""把二进制数据保存成wav文件（貌似保存下来的文件播放速度变快了）"""
+    r"""Author: zhang.haojian
+    把二进制数据保存成wav文件
+    Args:
+        wav_data (bytes): 音频数据流，标准情况下不含wav格式头，含了也没有影响，因为只是音频
+            最前面多了44个字节的数据，人是听不出来的
+        filepath (str): wav文件的保存路径
+        format, channels, rate: 数据格式，声道数，采样率，略
+    """
     with wave.open(filepath, "wb") as wf:
         wf.setnchannels(channels)
         wf.setsampwidth(pyaudio.get_sample_size(format))

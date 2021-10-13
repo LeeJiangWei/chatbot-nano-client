@@ -108,7 +108,7 @@ def receive_as_generator(sock):
     data = b''
     while True:
         try:
-            content = sock.recv(1)
+            content = sock.recv(1024)
         except Exception as e:
             if str(e) == "timed out":
                 # 当wav_data是无人声数据时，服务器没有识别到汉字，将不会返回任何信息，此时客户端需要自己结束这次连接
@@ -117,11 +117,17 @@ def receive_as_generator(sock):
             else:
                 raise e
 
-        if content == b'\n':
+        if content == b'':
+            break
+        end_pos = content.find(b'\n')  # 一个数据包结束的位置
+        while end_pos != -1:  # 有结束符
+            data += content[:end_pos]
             yield data
             data = b''
-        else:
-            data += content
+            content = content[end_pos + 1:]
+            end_pos = content.find(b'\n')
+        # 一直切分到data没有结束符
+        data += content
 
 
 def wav_bin_to_str_voiceai(wav_data: bytes) -> str:

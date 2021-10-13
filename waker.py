@@ -93,6 +93,7 @@ class Waker:
 
         self.confidence = (np.prod(np.max(self.smooth_probabilities, axis=1))) ** (1 / len(self.labels))
 
+        # wav_data含有44个字节的wav格式头，后面的才是音频数据
         signals = np.frombuffer(wav_data[44:], dtype=np.int16)
 
         if plot:  # 仅用于观察噪声波形，正式使用时不可以plot，因为目前版本外面的listener.listen()跟这里是串行的，plt.pause()的时间内场景的声音将不被录制
