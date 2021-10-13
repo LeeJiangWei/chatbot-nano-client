@@ -121,7 +121,7 @@ class Recorder:
         stop_count = 0
         exit_count = 0
         start_thr = 10  # 300ms
-        stop_thr = 66  # 2s
+        stop_thr = 50  # 1.5s
         exit_thr = 333  # 10s
         while True:
             chunk = stream.read(int(self.chunk_length * self.rate / 1000))  # 除以1000，把ms变成s
@@ -164,7 +164,7 @@ class Recorder:
 
 class Player:
     def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=8000):
-        # should match TTS module
+        # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
         self.pformat = pformat
         self.channels = channels
         self.rate = rate

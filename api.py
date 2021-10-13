@@ -163,6 +163,7 @@ def question_to_answer(message: str, sender: str = "nano"):
 def str_to_wav_bin(input_str: str) -> bytes:
     base_url = "http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed=5.8&update=1&access_token=default&domain=1" \
                "&language=zh&voice_name=Jingjingcc&&text= "
+    # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
     # 当回答包括多个句子时（常见于闲聊模式），文本太长会导致对面返回空数据，所以我们要自己把数据分段发送
     result = b""
     for sentence in re.split("；|？|。|,|！|!", input_str):
