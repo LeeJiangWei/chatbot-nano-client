@@ -175,7 +175,7 @@ class Player:
         self.wakeup_event = None
         self.seek = 0
 
-        self.play_frames = 0  # 仅用于配合tqdm_iterator使用，表示stream的while播放循环中两次time.sleep()间隔播放了几帧数据
+        self.play_frames = 0  # 仅用于配合tqdm_iterator使用，表示stream的while播放循环中已经播放了几帧数据
 
     def __del__(self):
         self.audio.terminate()
@@ -192,7 +192,7 @@ class Player:
         # interrupt
         stream.write(wav_data)
         # to solve the suddenly cut off of audio
-        time.sleep(stream.get_output_latency() * 2)
+        time.sleep(stream.get_output_latency())
         stream.stop_stream()
         stream.close()
 
@@ -202,10 +202,6 @@ class Player:
         self.seek += chunk_length
 
         data = self.wav_data[start: self.seek]
-        # 回调函数返回不完整的块chunk时，stream将不播放该块并结束回调的死循环，下面两行是专门处理音频的最后一个块的
-        if 0 < len(data) < chunk_length:
-            data += b"\x00" * (chunk_length - len(data))  # 补足chunk_length个字节
-
         self.play_frames += 1
 
         return data, pyaudio.paContinue
@@ -228,24 +224,30 @@ class Player:
                                  stream_callback=self._callback)
         stream.start_stream()
 
-        # tqdm_iterator仅用于展示播音过程，不想看可以去掉
         chunk_bytes = CHUNK_LENGTH * self.channels * pyaudio.get_sample_size(self.pformat)  # 一个CHUNK所包含的字节数
-        n_chunks = round(len(self.wav_data) / chunk_bytes + 0.5)  # 等同于math.ceil，不想为了这个多import一个math
-        tqdm_iterator = iter(tqdm(range(n_chunks), "播音中"))
+        # 回调函数返回不完整的块chunk时，stream将不播放该块并结束回调的死循环，因此在播放之前就把wav_data补足到块长度的整数倍
+        # 补足chunk_length个字节，第二个取余的目的是如果wav_data本来就是整数倍，就不需要额外加一个静音块
+        self.wav_data += b"\x00" * ((chunk_bytes - len(self.wav_data) % chunk_bytes) % chunk_bytes)
+        
+        # tqdm_iterator仅用于展示播音过程，不想看可以去掉
+        # NOTE: 目前tqdm_iterator还有未知问题，有时候正常有时候会在next(tqdm_iterator)处抛出StopIteration异常，只好先不打开
+        # n_chunks = len(self.wav_data) // chunk_bytes
+        # tqdm_iterator = iter(tqdm(range(n_chunks), "播音中"))
 
+        # self.play_frames, prev = 0, 0
         while stream.is_active():
-            self.play_frames = 0
             # 在播放音频的时候，每0.1s检测一次是否被唤醒，如果被唤醒则停止播音
             if wakeup_event.is_set():
                 break
             time.sleep(0.1)
-            for _ in (range(self.play_frames)):
-                next(tqdm_iterator)
-        # 把最后剩下的一点点走完
-        for _ in tqdm_iterator:
-            pass
+            # for _ in (range(self.play_frames - prev)):
+            #     next(tqdm_iterator)
+            # prev = self.play_frames
+        # 把最后剩下的一点点走完，这里因为是自己iter(tqdm())可能没用对，由于某种原因会剩下一点点
+        # for _ in tqdm_iterator:
+        #     pass
 
-        time.sleep(stream.get_output_latency() * 2)
+        time.sleep(stream.get_output_latency())
         # tx2开发板get_output_latency是0.256s
         stream.stop_stream()
         stream.close()
