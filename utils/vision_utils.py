@@ -1,8 +1,6 @@
 import struct
 import pickle
 import random
-import gzip
-from base64 import b64encode
 
 import numpy as np
 import cv2
@@ -159,8 +157,3 @@ def get_color_dict():
         bbox_color_dict[key] = color
 
     return bbox_color_dict
-
-
-def transform_for_send(bytes_data):
-    r"""因为json只支持string不支持bytes，为了网络传输方便把图像原始的二进制数据转换成string"""
-    return b64encode(gzip.compress(bytes_data, 6)).decode("utf-8")

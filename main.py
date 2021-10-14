@@ -4,28 +4,21 @@ import logging
 import socket
 import threading
 import time
-import json
-from base64 import b64encode
-import gzip
 from PIL import Image, ImageDraw, ImageFont
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pyaudio
-import cv2  # NOTE: 由于未知原因，先import cv2再import pyaudio会导致相机启动时报k4aException，所以这两行有先后顺序要求
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 把tensorflow的日志等级降低，不然输出一堆乱七八糟的东西
 import tensorflow as tf
-from matplotlib import cm
 import time
 
 from waker import Waker
 from audiohandler import Listener, Recorder, Player
 from utils.utils import get_response, bytes_to_wav_data, save_wav
-from utils.vision_utils import get_color_dict, transform_for_send
+from utils.vision_utils import get_color_dict
+from utils.package_utils import (Package, groupSendPackage, transform_for_send, client_service)
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
 from vision_perception.client_for_voice import InfoObtainer
-import multiprocessing as mp
 
 ######################################################################################################
 # 1. socket (127.0.0.1, 5588)                                                                        #
@@ -47,9 +40,7 @@ import multiprocessing as mp
 #   START-READING:  2
 #   COMPUTING:      3
 
-
-SOCKET = ("0.0.0.0", 5588)
-EXPIRE_TIME = 30
+SOCKET = ("0.0.0.0", 5588)  # 后端监听的端口
 
 HOST = "222.201.134.203"
 PORT = 17000
@@ -79,23 +70,9 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-global clients
-clients = {}
-
-images = [
-    '../static/img_6113974560314588376',
-    '../static/img_6519413793248989031'
-]
-#
-# with open(images[0], 'rb') as f:
-#     initial_image = b64encode(gzip.compress(f.read(), 6)).decode('utf-8')
-
-
-
-
-
 class MainProcess(object):
     def __init__(self):
+        self.clients = {}
         self.state = 0
         self.detection_result = ''
         return
@@ -107,9 +84,9 @@ class MainProcess(object):
         self.__dict__[key] = value
         if key == 'state':
             # group send real time state
-            groupSendPackage(Package.real_time_state(value))
+            groupSendPackage(Package.real_time_state(value), self.clients)
         elif key == 'detection_result':
-            groupSendPackage(Package.real_time_detection_result(value))
+            groupSendPackage(Package.real_time_detection_result(value), self.clients)
         return
 
     def start_speech(self):
@@ -170,9 +147,9 @@ class MainProcess(object):
 
                 recognized_str = "你好米娅"
                 # 将用户输入的语音转换成文字的结果群发给每个前端
-                groupSendPackage(Package.voice_to_word_result(recognized_str))
+                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
                 # 如果STT（语音转文字）异常，通过置success=False向前端传达出错了的信号
-                # groupSendPackage(Package.voice_to_word_result("STT出错", success=False))  # 具体错误可以具体写
+                # groupSendPackage(Package.voice_to_word_result("STT出错", success=False), self.clients)  # 具体错误可以具体写
                 # self.state = 0
 
                 # save_wav(b"".join(frames), "tmp.wav")  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
@@ -192,7 +169,7 @@ class MainProcess(object):
                     self.player_exit_event.wait()
 
                 # 将智能系统回答的文本群发给每个前端
-                groupSendPackage(Package.response_word_result(response_str))
+                groupSendPackage(Package.response_word_result(response_str), self.clients)
 
                 self.state = 2  # speaking
                 self.player_exit_event.clear()
@@ -202,49 +179,6 @@ class MainProcess(object):
                 if self.all_exit_event.is_set():  # 正常退出，不使用ctrl+C退出，不然相机老是出幺蛾子
                     print("退出主程序。")
                     break
-
-
-
-        image_index = 0
-
-        while True:
-            if self.state == 1:  # 前端按下录音按钮，这边开始录音
-                # 如果不主动退出，speech时间为10秒钟
-                start = time.time()
-                while self.state == 1:
-                    if time.time() - start >= 10:
-                        break
-                    else:
-                        time.sleep(1)
-                    if 1 < time.time() - start < 2:
-                        # 返回detection result
-                        image_index += 1
-                        image_index %= 2
-                        with open(images[image_index], 'rb') as f:
-                            self.detection_result = b64encode(gzip.compress(f.read(), 6)).decode('utf-8')
-                #  说话结束，返回语音转文字结果
-                random = (int(time.time() * 100) % 2 == 1)
-                if random:
-                    # group send voice_to_word error result
-                    # 如果stt（语音转文字）异常，通过置success=False向前端传达出错了的信号
-                    # groupSendPackage(Package.voice_to_word_result('异常错误', success=False))  # 具体错误可以具体写
-                    # self.state = 0
-                    continue
-                else:
-                    # 将用户输入的语音转换成文字的结果群发给每个前端
-                    groupSendPackage(Package.voice_to_word_result(response_str))
-                    pass
-                # computing
-                self.state = 3
-                time.sleep(1)
-                # start reading
-                self.state = 2
-                # group send response_word_result
-                # 将智能系统回答的文本群发给每个前端
-                groupSendPackage(Package.response_word_result(response_str))
-                time.sleep(3)
-                self.state = 0
-
 
     def interact(self):
         recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
@@ -304,7 +238,7 @@ class MainProcess(object):
                 # haven't said anything but pass VAD.
                 if len(recognized_str) == 0 or "没事" in recognized_str:
                     break
-                groupSendPackage(Package.voice_to_word_result(recognized_str))
+                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
 
                 # TODO: 把退出主程序的功能做好，现在没有实现预期功能
                 if recognized_str in ["退出。", "关机。"]:
@@ -321,7 +255,7 @@ class MainProcess(object):
                 self.state = 2  # speaking
                 for r, w in zip(response_list, wav_list):
                     logger.info(r)
-                    groupSendPackage(Package.response_word_result(r))
+                    groupSendPackage(Package.response_word_result(r), self.clients)
                     print("outer:", self.wakeup_event.is_set())
                     save_wav(w, "tmp.wav", rate=self.player.rate)  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
                     # self.player.play_unblock(w, self.wakeup_event)
@@ -335,138 +269,6 @@ class MainProcess(object):
             self.state = 0  # waiting
             self.player_exit_event.set()
             self.is_playing = False
-
-class Package(object):
-
-    @staticmethod
-    def real_time_detection_result(img_data):
-        r"""本数据包包含视觉模块的检测结果"""
-        assert type(img_data) == str
-        return {
-            'type': 0,
-            'data': img_data
-        }
-
-    @staticmethod
-    def real_time_state(state):
-        r"""本数据包是对前端心跳包请求的回应，回复后端当前的状态"""
-        assert type(state) == int
-        return {
-            'type': 1,
-            'data': state
-        }
-
-    @staticmethod
-    def voice_to_word_result(data, success=True):
-        r"""本数据包包含用户输入的语音转成文字的结果"""
-        # if success: data may be the sentence of speaking. else: data may be the error message e.g. "network is error"
-        assert type(success) == bool
-        return {
-            'type': 2,
-            'success': success,
-            'data': data
-        }
-
-    @staticmethod
-    def response_word_result(data, success=True):
-        r"""本数据包包含智能系统回复的文本结果"""
-        # if success: data may be the sentence of response. else: data may be the error message e.g. "network is error"
-        assert type(success) == bool
-        return {
-            'type': 3,
-            'success': success,
-            'data': data
-        }
-
-
-class ReceivePackage(object):
-    def __init__(self, sock, addr, main_process):
-        self.sock = sock
-        self.addr = addr
-        self.main_process = main_process
-        return
-
-    def __call__(self, data):
-        try:
-            data = json.loads(data)
-            assert 'type' in data
-        except:
-            return False
-        if data['type'] == 0:
-            return self.start_speech(data)
-        elif data['type'] == 1:
-            return self.close_speech(data)
-        elif data['type'] == 2:
-            return self.exit_reading(data)
-        elif data['type'] == 3:
-            return self.heart_beat(data)
-        else:
-            return False
-
-    def start_speech(self, *args):
-        self.main_process.start_speech()
-        return True
-
-    def close_speech(self, *args):
-        self.main_process.close_speech()
-        return True
-
-    def exit_reading(self, *args):
-        self.main_process.close_reading()
-        return True
-
-    def heart_beat(self, data):
-        if 'time' not in data or type(data['time']) != float:
-            return False
-        if str(self.addr) in clients:
-            if clients[str(self.addr)]['last_active_time'] < float(data['time']):
-                clients[str(self.addr)]['last_active_time'] = float(data['time'])
-        else:
-            clients[str(self.addr)] = {
-                'sock': self.sock,
-                'addr': self.addr,
-                'last_active_time': float(data['time'])
-            }
-        return True
-
-
-def sendPackage(sock, data):
-    assert type(data) == dict
-    data = json.dumps(data).strip() + '\n'
-    try:
-        sock.send(data.encode('utf-8'))
-    except:
-        pass
-    return
-
-
-def groupSendPackage(data):
-    r"""将数据包群发给每一个前端"""
-    global clients
-    activate_clients = {}
-    for addr in clients:
-        if time.time() - clients[addr]['last_active_time'] > EXPIRE_TIME:
-            print(addr, 'disconnected')
-            clients[addr]['sock'].close()
-        else:
-            sendPackage(clients[addr]['sock'], data)
-            activate_clients[addr] = clients[addr]
-    clients = activate_clients
-    return
-
-
-def receivePackage(sock):
-    history_data = b''
-    while True:
-        data = sock.recv(1)
-        if data == b'':
-            break
-        if data == b'\n':
-            yield history_data
-            history_data = b''
-        else:
-            history_data += data
-    return
 
 
 def main():
@@ -486,22 +288,6 @@ def main():
         t = threading.Thread(target=client_service, args=(recv_sock, recv_addr, main_process, ))
         t.setDaemon(True)
         t.start()
-
-
-def client_service(sock, addr, main_process):
-    clients[str(addr)] = {
-        'sock': sock,
-        'addr': addr,
-        'last_active_time': time.time()
-    }
-    # send initialization state to connecting socket.
-    sendPackage(sock, Package.real_time_state(main_process.state))
-    sendPackage(sock, Package.real_time_detection_result(main_process.detection_result))
-
-    rp = ReceivePackage(sock, addr, main_process)
-    for message in receivePackage(sock):
-        rp(message)
-    return
 
 
 if __name__ == '__main__':
