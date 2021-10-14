@@ -2,6 +2,7 @@
 import os
 import sys
 import logging
+from PIL import Image, ImageDraw, ImageFont
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,9 +13,9 @@ import tensorflow as tf
 from matplotlib import cm
 import time
 
-import classifier
+from waker import Waker
 from audiohandler import Listener, Recorder, Player
-from utils.utils import get_response, bytes_to_wav_data  # , TEST_INFO
+from utils.utils import get_response, bytes_to_wav_data, save_wav
 from utils.vision_utils import get_color_dict
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
@@ -31,13 +32,10 @@ RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
 LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
-RATE = 16000
+INPUT_RATE = 16000
+OUTPUT_RATE = 8000
 LISTEN_SECONDS = 1
-TOPK = 1
 EXPECTED_WORD = "miya"
-
-W_SMOOTH = 5
-W_MAX = 10
 
 PLOT = False
 
@@ -51,9 +49,10 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+
 def interact_process(wakeup_event, is_playing, player_exit_event, all_exit_event, haddata):
-    recorder = Recorder(FORMAT, CHANNELS, RATE, RECORDER_CHUNK_LENGTH)
-    player = Player()
+    recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
+    player = Player(rate=OUTPUT_RATE)
     while True:
         print("Wait to be wakeup...")
         wakeup_event.wait()
@@ -86,22 +85,25 @@ def interact_process(wakeup_event, is_playing, player_exit_event, all_exit_event
                 for item in result["attribute"]:
                     fp.write(str(item) + "\n")
 
-            img = cv2.imread(perception.savepath)
+            img = Image.open(perception.savepath).convert("RGB")
+            drawer = ImageDraw.ImageDraw(img)
+            fontsize = 13
+            font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
             for attr in result["attribute"]:
-                # putText参数：np.ndarray, 文本左下角坐标(x, y), 字体, 文字缩放比例, (R, G, B), 厚度(不是高度)
-                cv2.putText(img, attr["category"], attr["bbox"][:2], cv2.FONT_HERSHEY_COMPLEX, 0.6, BBOX_COLOR_DICT[attr["category"]],
-                            thickness=2)
-                cv2.rectangle(img, attr["bbox"][:2], attr["bbox"][2:], BBOX_COLOR_DICT[attr["category"]], thickness=2)
-            cv2.imwrite("tmp2.jpg", img)
+                # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
+                # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+                drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
+                # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
+                drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
+            img.save("tmp2.jpg")
 
             recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
             logger.info("Recognize result: " + recognized_str)
 
             # haven't said anything but pass VAD.
-
-            if len(recognized_str) == 0 or "没事了" in recognized_str:
+            if len(recognized_str) == 0 or "没事" in recognized_str:
                 break
-            
+
             # TODO: 把退出主程序的功能做好，现在没有实现预期功能
             if recognized_str in ["退出。", "关机。"]:
                 print("退出互动环节...")
@@ -115,6 +117,7 @@ def interact_process(wakeup_event, is_playing, player_exit_event, all_exit_event
 
             for r, w in zip(response_list, wav_list):
                 logger.info(r)
+                # save_wav(w, "tmp.wav", rate=player.rate)  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
                 player.play_unblock(w, wakeup_event)
 
             # interrupt
@@ -140,93 +143,39 @@ def main():
     all_exit_event = mp.Event()
     haddata = mp.Value('i', False)  # 用于InfoObtainer的共享变量
 
-
     inter_proc = mp.Process(target=interact_process, args=(wakeup_event, is_playing, player_exit_event, all_exit_event, haddata))
     inter_proc.daemon = True  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
     inter_proc.start()
 
-    classifier.load_graph("./models/CRNN_mia2.pb")
-    labels = classifier.load_labels("./models/CRNN_mia2_labels.txt")
-
-    listener = Listener(FORMAT, CHANNELS, RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
-    player = Player()
+    listener = Listener(FORMAT, CHANNELS, INPUT_RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
+    player = Player(rate=OUTPUT_RATE)
     vpr = VoicePrint()
+    waker = Waker(EXPECTED_WORD)
 
-    with tf.Session() as sess:
+    with tf.compat.v1.Session() as sess:
         # main loop
         while True:
-            history_probabilities = [np.zeros(len(labels)) for _ in range(W_SMOOTH)]
-            smooth_probabilities = [np.zeros(len(labels)) for _ in range(W_MAX)]
-            confidence = 0.0
-            smooth_pred = ""
-
             listener.listen()
             # keyword spotting loop
             print("Listening...")
-            while not (smooth_pred == EXPECTED_WORD and confidence > 0.5):
-                frames = listener.buffer[-int(RATE / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):]
-                wav_data = bytes_to_wav_data(b"".join(frames), FORMAT, CHANNELS, RATE)
+            while not waker.waked_up():
+                # frames包含了最近LISTEN_SECONDS内的音频数据
+                frames = listener.buffer[-int(INPUT_RATE / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):]
+                wav_data = bytes_to_wav_data(b"".join(frames), FORMAT, CHANNELS, INPUT_RATE)
+                waker.update(wav_data, sess, PLOT)
 
-                softmax_tensor = sess.graph.get_tensor_by_name("labels_softmax:0")
-                mfcc_tensor = sess.graph.get_tensor_by_name("Mfcc:0")
-                (predictions,), (mfcc,) = sess.run([softmax_tensor, mfcc_tensor], {"wav_data:0": wav_data})
-
-                history_probabilities.pop(0)
-                history_probabilities.append(predictions)
-
-                smooth_predictions = np.sum(history_probabilities, axis=0) / W_SMOOTH
-
-                # top_k = smooth_predictions.argsort()[-TOPK:][::-1]
-                # for node_id in top_k:
-                #     human_string = labels[node_id]
-                #     score = smooth_predictions[node_id]
-                #     logging.info('%s (score = %.5f)' % (human_string, score))
-
-                pred_index = predictions.argsort()[-1:][::-1][0]
-                pred = labels[pred_index]
-                pred_score = predictions[pred_index]
-
-                smooth_index = smooth_predictions.argsort()[-1:][::-1][0]
-                smooth_pred = labels[smooth_index]
-                smooth_score = smooth_predictions[smooth_index]
-
-                smooth_probabilities.pop(0)
-                smooth_probabilities.append(smooth_predictions)
-
-                confidence = (np.prod(np.max(smooth_probabilities, axis=1))) ** (1 / len(labels))
-
-                signals = np.frombuffer(b''.join(frames), dtype=np.int16)
-
-                if PLOT:
-                    plt.ion()
-                    plt.subplot(221)
-                    plt.title("Wave")
-                    plt.ylim([-500, 500])
-                    plt.plot(signals)
-                    plt.subplot(222)
-                    plt.title("Spectrogram")
-                    plt.specgram(signals, NFFT=480, Fs=16000)
-                    plt.subplot(223)
-                    plt.title("MFCC")
-                    plt.imshow(np.swapaxes(mfcc, 0, 1), interpolation='nearest', cmap=cm.coolwarm, origin='lower')
-                    plt.subplot(224)
-                    plt.axis("off")
-                    plt.text(0, 0.5, 'predict: %s (score = %.5f)\nsmooth: %s (score = %.5f)\nconfidence = %.5f' % (
-                        pred, pred_score, smooth_pred, smooth_score, confidence), ha="left", va="center")
-                    plt.pause(0.1)
-                    plt.clf()
-                else:
-                    # logger.info('predict: %s (score = %.5f)  smooth: %s (score = %.5f)  confidence = %.5f' % (
-                    #     pred, pred_score, smooth_pred, smooth_score, confidence))
-                    pass  # debug
+            waker.reset()  # 重置waker的置信度等参数，使其下轮循环能重新进入内层while循环，等待下一次唤醒
             perception.send_single_image()
             haddata.value = False  # False要求重新向视觉模块获取视觉信息
             listener.stop()
             print("WAKEUP!")
-            spk_name = vpr.get_spk_name(wav_data)
+            # save_wav(b"".join(frames), "tmp.wav")  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
 
             # wakeup
             if not is_playing.value:
+                t1 = time.time()
+                spk_name = vpr.get_spk_name(wav_data)
+                print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
                 wav = str_to_wav_bin(spk_name + '你好!')
             # interrupt
             elif is_playing.value:
@@ -244,5 +193,5 @@ def main():
                 break
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

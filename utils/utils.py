@@ -209,6 +209,8 @@ def visual_to_sentence(query, objects):
             return f"抱歉，我没有看到{query_category}。"
         elif matched_num == 0:
             return f"我看到了{matched_num + unknown_num}个{query_category}，但是我不认识它们的颜色。"
+        elif matched_num == 1:
+            return f"{query_category}是{list(colors_of_matched.keys())[0]}的。"
         elif len(colors_of_matched) == 1 and unknown_num == 0:
             color_description = ""
             for c in colors_of_matched.keys():
@@ -306,6 +308,14 @@ def visual_to_sentence(query, objects):
         else:
             return f"对不起，我不知道{query_category}旁边有什么东西。"
 
+    elif intent == "list_all":
+        all_objects = {}
+        for obj in objects:
+            category = EN_ZH_MAPPING[obj["category"]]
+            all_objects[category] = all_objects[category] + 1 if category in all_objects.keys() else 1
+
+        return "我看到了" + "，".join([f"{n}个{o}" for o, n in all_objects.items()]) + "。"
+
     else:
         return "对不起，我暂时无法回答这个问题。"
 
@@ -314,12 +324,12 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     response_list, wav_data_list = [], []
 
     t0 = time.time()
-    # recognized_str = api.wav_bin_to_str(wav_data)
+    recognized_str = api.wav_bin_to_str(wav_data)
+    # recognized_str = api.wav_bin_to_str_voiceai(wav_data)
 
-    # for k, v in SYNONYM_TABLE.items():
-    #     recognized_str = recognized_str.replace(k, v)
+    for k, v in SYNONYM_TABLE.items():
+        recognized_str = recognized_str.replace(k, v)
 
-    recognized_str = api.wav_bin_to_str_voiceai(wav_data)
     if len(recognized_str) == 0 or "没事了" in recognized_str:
         return recognized_str, None, None
     t1 = time.time()
@@ -365,10 +375,26 @@ def bytes_to_wav_data(bytes_data, format=pyaudio.paInt16, channels=1, rate=16000
     return wav_data
 
 
+def save_wav(wav_data, filepath, format=pyaudio.paInt16, channels=1, rate=16000):
+    r"""Author: zhang.haojian
+    把二进制数据保存成wav文件
+    Args:
+        wav_data (bytes): 音频数据流，标准情况下不含wav格式头，含了也没有影响，因为只是音频
+            最前面多了44个字节的数据，人是听不出来的
+        filepath (str): wav文件的保存路径
+        format, channels, rate: 数据格式，声道数，采样率，略
+    """
+    with wave.open(filepath, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(pyaudio.get_sample_size(format))
+        wf.setframerate(rate)
+        wf.writeframes(wav_data)
+
+
 if __name__ == "__main__":
     test_query = {
         "intent": "ask_object_color",
-        "object": "杯子",
+        "object": "水壶",
         "color": ""
     }
     s = visual_to_sentence(test_query, TEST_INFO)

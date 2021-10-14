@@ -131,14 +131,29 @@ def send_data(s, data):
     s.sendall(struct.pack(">L", size) + data)
 
 
+def bgr_to_rgb(color_dict):
+    r"""cv2画框的时候使用，PIL的颜色参数是RGB，cv2是BGR
+    """
+    for key in color_dict:
+        color_dict[key] = color_dict[key][::-1]
+
+
 def get_color_dict():
     r"""Author: zhang.haojian
     获取每种物体对应的颜色，用于可视化结果时给每个物体画框框
     """
     random.seed(0)
-    bbox_color_dict = {}
+    bbox_color_dict = {
+        "bottle": (57, 204, 204),
+        "box": (221, 221, 221),
+        "cup": (240, 18, 190),
+        "kettle": (0, 116, 217),
+        "pottedplant": (57, 204, 204),
+    }
     for key in EN_ZH_MAPPING:
-        color = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
+        if key in bbox_color_dict:
+            continue
+        color = tuple([round((random.random() * 0.6 + 0.4) * 255 + 0.5) for _ in range(3)])
         bbox_color_dict[key] = color
 
     return bbox_color_dict

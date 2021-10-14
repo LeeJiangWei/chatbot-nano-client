@@ -1,9 +1,12 @@
+import time
 import re
 import json
 import socket
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 import requests
 import threading
+import urllib3
+urllib3.disable_warnings()
 
 SERVER_HOST = "222.201.134.203"
 # SERVER_HOST = "gentlecomet.com"
@@ -105,7 +108,7 @@ def receive_as_generator(sock):
     data = b''
     while True:
         try:
-            content = sock.recv(1)
+            content = sock.recv(1024)
         except Exception as e:
             if str(e) == "timed out":
                 # 当wav_data是无人声数据时，服务器没有识别到汉字，将不会返回任何信息，此时客户端需要自己结束这次连接
@@ -114,11 +117,17 @@ def receive_as_generator(sock):
             else:
                 raise e
 
-        if content == b'\n':
+        if content == b'':
+            break
+        end_pos = content.find(b'\n')  # 一个数据包结束的位置
+        while end_pos != -1:  # 有结束符
+            data += content[:end_pos]
             yield data
             data = b''
-        else:
-            data += content
+            content = content[end_pos + 1:]
+            end_pos = content.find(b'\n')
+        # 一直切分到data没有结束符
+        data += content
 
 
 def wav_bin_to_str_voiceai(wav_data: bytes) -> str:
@@ -160,6 +169,7 @@ def question_to_answer(message: str, sender: str = "nano"):
 def str_to_wav_bin(input_str: str) -> bytes:
     base_url = "http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed=5.8&update=1&access_token=default&domain=1" \
                "&language=zh&voice_name=Jingjingcc&&text= "
+    # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
     # 当回答包括多个句子时（常见于闲聊模式），文本太长会导致对面返回空数据，所以我们要自己把数据分段发送
     result = b""
     for sentence in re.split("；|？|。|,|！|!", input_str):
@@ -177,14 +187,15 @@ class VoicePrint:
 
     @staticmethod
     def get_fileid_bin(wav_data, text='12345678'):
-        '''
+        '''上传音频数据，获取fileid
 
         :param file_path:
         :param text:  unimportant if asr_check=False
-        :return:
+        Return:
+            file_id (str): 32 bits id of file
         '''
 
-        API = 'api/file/upload'
+        upload_api = 'api/file/upload'
         headers = {
             'x-app-id': VPR_APP_ID,
             'x-app-secret': VPR_APP_SECRET,
@@ -200,10 +211,11 @@ class VoicePrint:
             "asr_model": "susie-number-16k",
             "action_type": "0",
             "info": [{
-                "name": 'wake.wav',
-                "text": text
+                "name": 'wake.wav',  # 音频数据在对端服务器上保存的文件名
+                "text": text  # 对该音频文件的描述文本
             }]
         }
+        # 使用multipart/form-data的方式传送正文数据时，数据需要先放进一个MultipartEncoder
         multipart_encoder = MultipartEncoder(
             fields={
                 'content': json.dumps(content),
@@ -212,7 +224,10 @@ class VoicePrint:
             boundary='123456'
         )
 
-        response = requests.post(url=VPR_URL + API, data=multipart_encoder, headers=headers, verify=False).json()
+        t1 = time.time()
+        response = requests.post(url=VPR_URL + upload_api, data=multipart_encoder, headers=headers, verify=False).json()
+        t2 = time.time()
+        print(f"获取fileid的时间为{t2 - t1:.2f}秒")
 
         return response['data']['info_list'][0]['id']
 
@@ -223,7 +238,7 @@ class VoicePrint:
         tag: string  if "",  verify 1:N
         group: string
         """
-        API = 'api/vpr/identify'
+        verify_api = 'api/vpr/identify'
 
         headers = {
             'x-app-id': VPR_APP_ID,
@@ -252,7 +267,10 @@ class VoicePrint:
             "file_id_list": file_id
         }
 
-        response = requests.post(url=VPR_URL + API, data=json.dumps(content), headers=headers, verify=False).json()
+        t2 = time.time()
+        response = requests.post(url=VPR_URL + verify_api, data=json.dumps(content), headers=headers, verify=False).json()
+        t3 = time.time()
+        print(f"获取声纹识别结果的时间为{t3 - t2:.2f}秒")
         if response['flag'] and not response['error']:
             if len(response['data']) != 0:
                 print("声纹识别结果：", response)
@@ -267,7 +285,7 @@ class VoicePrint:
 
     def get_spk_name(self, wav_data):
         file_id = self.get_fileid_bin(wav_data)
-        top_tag, top_score = self.verify_vpr(file_id, tag='', group=VPR_GROUP)
+        top_tag, top_score = self.verify_vpr(file_id, tag="", group=VPR_GROUP)
 
         if top_tag in self.tag2name.keys():
             return self.tag2name[top_tag]
