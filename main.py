@@ -21,7 +21,7 @@ import time
 from waker import Waker
 from audiohandler import Listener, Recorder, Player
 from utils.utils import get_response, bytes_to_wav_data, save_wav
-from utils.vision_utils import get_color_dict
+from utils.vision_utils import get_color_dict, transform_for_send
 from api import VoicePrint, str_to_wav_bin
 from vision_perception import VisionPerception
 from vision_perception.client_for_voice import InfoObtainer
@@ -79,7 +79,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-
+global clients
 clients = {}
 
 images = [
@@ -101,6 +101,9 @@ class MainProcess(object):
         return
 
     def __setattr__(self, key, value):
+        # 巧妙的设计，在服务端对self.state和self.detection_result进行赋值操作时，把新值广播给所有的客户端
+        if key in self.__dict__ and value == self.__dict__[key]:
+            return
         self.__dict__[key] = value
         if key == 'state':
             # group send real time state
@@ -132,14 +135,14 @@ class MainProcess(object):
                                                                                     │ 主进程可以在record_auto()结束时、播放语音前或者播放语音时通过说唤醒词退出互动阶段
         互动阶段：wakeup_event.set() ─── 进入interact_process循环 ─── recorder.record_auto()录制用户语音 ─── 向视觉模块获取信息 ─── 结合视觉信息向语音模块获取回复的音频数据 ─── player.play_unblock()播放语音回复 ─── wakeup_event.clear()
         """
-        self.wakeup_event = mp.Event()
-        self.is_playing = mp.Value('i', 0)
-        self.player_exit_event = mp.Event()
-        self.all_exit_event = mp.Event()
-        haddata = mp.Value('i', False)  # 用于InfoObtainer的共享变量
+        self.wakeup_event = threading.Event()
+        self.is_playing = False
+        self.player_exit_event = threading.Event()
+        self.all_exit_event = threading.Event()
+        self.haddata = False  # 用于InfoObtainer的共享变量
 
-        inter_proc = mp.Process(target=self.interact, args=(self.wakeup_event, self.is_playing, self.player_exit_event, self.all_exit_event, haddata))
-        inter_proc.daemon = True  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
+        inter_proc = threading.Thread(target=self.interact, args=())
+        inter_proc.setDaemon(True)  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
         inter_proc.start()
 
         listener = Listener(FORMAT, CHANNELS, INPUT_RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
@@ -161,7 +164,7 @@ class MainProcess(object):
 
                 waker.reset()  # 重置waker的置信度等参数，使其下轮循环能重新进入内层while循环，等待下一次唤醒
                 perception.send_single_image()
-                haddata.value = False  # False要求重新向视觉模块获取视觉信息
+                self.haddata = False  # False要求重新向视觉模块获取视觉信息
                 listener.stop()
                 print("WAKEUP!")
 
@@ -175,22 +178,23 @@ class MainProcess(object):
                 # save_wav(b"".join(frames), "tmp.wav")  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
 
                 # wakeup
-                if not self.is_playing.value:
+                if not self.is_playing:
                     t1 = time.time()
                     spk_name = vpr.get_spk_name(wav_data)
                     print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
                     response_str = spk_name + "你好!"
                     wav = str_to_wav_bin(response_str)
                 # interrupt
-                elif self.is_playing.value:
+                elif self.is_playing:
                     self.wakeup_event.set()
-                    response_str = "我在!"
+                    response_str = "我在。"
                     wav = str_to_wav_bin(response_str)
                     self.player_exit_event.wait()
 
                 # 将智能系统回答的文本群发给每个前端
                 groupSendPackage(Package.response_word_result(response_str))
 
+                self.state = 2  # speaking
                 self.player_exit_event.clear()
                 self.player.play(wav)
                 self.wakeup_event.set()
@@ -249,23 +253,30 @@ class MainProcess(object):
             self.wakeup_event.wait()
             self.wakeup_event.clear()
             while True:
-                self.is_playing.value = True
+                self.is_playing = True
                 logger.info("Start recording...")
+                self.state = 1  # recording
                 wav_list, no_sound = recorder.record_auto()
                 logger.info("Stop recording.")
                 if no_sound:
                     logger.info("No sound detected, conversation canceled.")
                     break
 
+                # 如果在录音的过程中收到唤醒词（比如唤醒之后说的还是唤醒词），录音结束后将来到这里，应当不对录音内容做互动处理，跳出互动阶段
+                if self.wakeup_event.is_set():
+                    self.wakeup_event.clear()
+                    break
+
                 wav_data = bytes_to_wav_data(b"".join(wav_list))
                 logger.info("Waiting server...")
+                self.state = 3  # computing
 
                 # perception.send_single_image()
-                # self.haddata.value = False  # False要求重新向视觉模块获取视觉信息
+                # self.haddata = False  # False要求重新向视觉模块获取视觉信息
                 # time.sleep(0.1)  # 给视觉模块时间重置信息
                 data = {"require": "attribute"}
-                result = I.obtain(data, self.haddata.value)
-                self.haddata.value = True  # 获得过一次视觉信息之后，在下次重新唤醒之前就不需要重复获取了
+                result = I.obtain(data, self.haddata)
+                self.haddata = True  # 获得过一次视觉信息之后，在下次重新唤醒之前就不需要重复获取了
                 
                 with open("visual_info.txt", "w") as fp:
                     fp.write("时间戳:" + result["timestamp"] + "\n")
@@ -283,6 +294,9 @@ class MainProcess(object):
                     # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
                     drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
                 img.save("tmp2.jpg")
+                with open("tmp2.jpg", "rb") as fp:
+                    # 赋值后就会自动把图像发给前端
+                    self.detection_result = transform_for_send(fp.read())
 
                 recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
                 logger.info("Recognize result: " + recognized_str)
@@ -290,6 +304,7 @@ class MainProcess(object):
                 # haven't said anything but pass VAD.
                 if len(recognized_str) == 0 or "没事" in recognized_str:
                     break
+                groupSendPackage(Package.voice_to_word_result(recognized_str))
 
                 # TODO: 把退出主程序的功能做好，现在没有实现预期功能
                 if recognized_str in ["退出。", "关机。"]:
@@ -298,18 +313,28 @@ class MainProcess(object):
                     time.sleep(10)  # 坐等主进程退出
                     break
 
-                for r, w in zip(response_list, wav_list):
-                    logger.info(r)
-                    # save_wav(w, "tmp.wav", rate=player.rate)  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
-                    self.player.play_unblock(w, self.wakeup_event)
-
-                # interrupt
+                # 如果在准备回复内容的过程中收到唤醒词，回复内容准备好之后将来到这里，应当不继续播音，跳出互动阶段
                 if self.wakeup_event.is_set():
                     self.wakeup_event.clear()
                     break
 
+                self.state = 2  # speaking
+                for r, w in zip(response_list, wav_list):
+                    logger.info(r)
+                    groupSendPackage(Package.response_word_result(r))
+                    print("outer:", self.wakeup_event.is_set())
+                    save_wav(w, "tmp.wav", rate=self.player.rate)  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
+                    # self.player.play_unblock(w, self.wakeup_event)
+                    self.player.play(w)
+
+                # 如果在播音时收到唤醒词，应当先从play的播放循环中跳出，然后来到这里，跳出互动阶段
+                if self.wakeup_event.is_set():
+                    self.wakeup_event.clear()
+                    break
+
+            self.state = 0  # waiting
             self.player_exit_event.set()
-            self.is_playing.value = False
+            self.is_playing = False
 
 class Package(object):
 
@@ -414,8 +439,10 @@ def sendPackage(sock, data):
         pass
     return
 
+
 def groupSendPackage(data):
     r"""将数据包群发给每一个前端"""
+    global clients
     activate_clients = {}
     for addr in clients:
         if time.time() - clients[addr]['last_active_time'] > EXPIRE_TIME:
@@ -424,8 +451,8 @@ def groupSendPackage(data):
         else:
             sendPackage(clients[addr]['sock'], data)
             activate_clients[addr] = clients[addr]
+    clients = activate_clients
     return
-
 
 
 def receivePackage(sock):
@@ -441,6 +468,7 @@ def receivePackage(sock):
             history_data += data
     return
 
+
 def main():
     # 原先的main变成如今的main_process.main
     main_process = MainProcess()
@@ -449,6 +477,8 @@ def main():
     t.start()
 
     sock = socket.socket()
+    # 该配置允许后端在断开连接后端口立即可用，也即没有TIME_WAIT阶段，调试必备
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(SOCKET)
     sock.listen(5)
     while True:
@@ -456,6 +486,7 @@ def main():
         t = threading.Thread(target=client_service, args=(recv_sock, recv_addr, main_process, ))
         t.setDaemon(True)
         t.start()
+
 
 def client_service(sock, addr, main_process):
     clients[str(addr)] = {

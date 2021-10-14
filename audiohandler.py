@@ -172,7 +172,6 @@ class Player:
         self.audio = pyaudio.PyAudio()
 
         self.wav_data = None
-        self.wakeup_event = None
         self.seek = 0
 
         self.play_frames = 0  # 仅用于配合tqdm_iterator使用，表示stream的while播放循环中已经播放了几帧数据
@@ -206,14 +205,15 @@ class Player:
 
         return data, pyaudio.paContinue
 
-    def play_unblock(self, wav_data, wakeup_event):
+    def play_unblock(self, wav_data, wakeup_event=None):
         r"""非阻塞地播放一个音频流，期间允许被打断
         Args:
             wav_data (bytes): 音频流二进制数据
-            wakeup_event (multiprocessing.Event()): 唤醒事件，用于打断音频播放
+            wakeup_event (thread.Event()): 唤醒事件，用于打断音频播放，传入None则相当于阻塞式播放
         """
+        # NOTE:这个函数还是有问题，加了补足一整个块也还是有问题，延长get_output_latency的sleep时间也没有，说话时间还是那么长，
+        # 只是说完之后停顿的时间变长了
         self.wav_data = wav_data
-        self.wakeup_event = wakeup_event
         self.seek = 0  # 文件指针
 
         stream = self.audio.open(format=self.pformat,
@@ -237,7 +237,7 @@ class Player:
         # self.play_frames, prev = 0, 0
         while stream.is_active():
             # 在播放音频的时候，每0.1s检测一次是否被唤醒，如果被唤醒则停止播音
-            if wakeup_event.is_set():
+            if wakeup_event and wakeup_event.is_set():
                 break
             time.sleep(0.1)
             # for _ in (range(self.play_frames - prev)):
@@ -269,6 +269,7 @@ class Player:
 
 
 if __name__ == "__main__":
+    # NOTE: out-of-date
     player = Player(rate=16000)
     with wave.open("./juice2.wav", "rb") as wf:
         wav_data = wf.readframes(wf.getnframes())

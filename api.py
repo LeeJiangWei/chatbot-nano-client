@@ -260,7 +260,7 @@ class VoicePrint:
             "asr_model": "susie-number-16k",
             "asv_check": False,
             "asv_threshold": "0.7",
-            "threshold": "10.0",
+            "threshold": "25.0",
             "ext": False,
             "sorting": True,
             "top_n": 10,
