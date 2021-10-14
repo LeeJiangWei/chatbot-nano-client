@@ -192,19 +192,31 @@ class Player:
         # interrupt
         stream.write(wav_data)
         # to solve the suddenly cut off of audio
-        time.sleep(stream.get_output_latency())
+        time.sleep(stream.get_output_latency() * 2)
         stream.stop_stream()
         stream.close()
 
     def _callback(self, in_data, frame_count, time_info, status):
         start = self.seek
-        chunk_length = frame_count * pyaudio.get_sample_size(self.pformat) * self.channels
-        self.seek += chunk_length
-
-        data = self.wav_data[start: self.seek]
         self.play_frames += 1
+        # wave_file 的读取就是双通道的, 单通道音频仅仅只是将另一通道置零, 而且python的bytes是16位的
+        #  frame_count * 2 channels *  sample_size (16bits) / 2 (16bit)
+        self.seek += int(frame_count * 2 * pyaudio.get_sample_size(self.pformat) / 2)
+        # print(start, self.seek)
+        if self.seek < len(self.wav_data):
+            # print("call")
 
-        return data, pyaudio.paContinue
+            # print(len(self.wav_data[start:self.seek]))
+            return self.wav_data[start:self.seek], pyaudio.paContinue
+        elif start < len(self.wav_data):
+            ret = self.wav_data[start:]
+            # pad the last frame with zero to chunk_length and put singal pacontinue,
+            # or the pyaudio would not play it. f**k the pyaudio
+            ret = ret + b"\x00" * (frame_count * 2 - len(ret))
+            # print(len(ret))
+            return ret, pyaudio.paContinue
+        else:
+            return b"", pyaudio.paComplete
 
     def play_unblock(self, wav_data, wakeup_event):
         r"""非阻塞地播放一个音频流，期间允许被打断
@@ -224,31 +236,24 @@ class Player:
                                  stream_callback=self._callback)
         stream.start_stream()
 
-        chunk_bytes = CHUNK_LENGTH * self.channels * pyaudio.get_sample_size(self.pformat)  # 一个CHUNK所包含的字节数
-        # 回调函数返回不完整的块chunk时，stream将不播放该块并结束回调的死循环，因此在播放之前就把wav_data补足到块长度的整数倍
-        # 补足chunk_length个字节，第二个取余的目的是如果wav_data本来就是整数倍，就不需要额外加一个静音块
-        self.wav_data += b"\x00" * ((chunk_bytes - len(self.wav_data) % chunk_bytes) % chunk_bytes)
-        
         # tqdm_iterator仅用于展示播音过程，不想看可以去掉
-        # NOTE: 目前tqdm_iterator还有未知问题，有时候正常有时候会在next(tqdm_iterator)处抛出StopIteration异常，只好先不打开
-        # n_chunks = len(self.wav_data) // chunk_bytes
-        # tqdm_iterator = iter(tqdm(range(n_chunks), "播音中"))
+        chunk_bytes = CHUNK_LENGTH * self.channels * pyaudio.get_sample_size(self.pformat)  # 一个CHUNK所包含的字节数
+        n_chunks = round(len(self.wav_data) / chunk_bytes + 0.5)  # 等同于math.ceil，不想为了这个多import一个math
+        tqdm_iterator = iter(tqdm(range(n_chunks), "播音中"))
 
-        # self.play_frames, prev = 0, 0
         while stream.is_active():
+            self.play_frames = 0
             # 在播放音频的时候，每0.1s检测一次是否被唤醒，如果被唤醒则停止播音
             if wakeup_event.is_set():
                 break
             time.sleep(0.1)
-            # for _ in (range(self.play_frames - prev)):
-            #     next(tqdm_iterator)
-            # prev = self.play_frames
-        # 把最后剩下的一点点走完，这里因为是自己iter(tqdm())可能没用对，由于某种原因会剩下一点点
-        # for _ in tqdm_iterator:
-        #     pass
+            for _ in (range(self.play_frames)):
+                next(tqdm_iterator)
+        # 把最后剩下的一点点走完
+        for _ in tqdm_iterator:
+            pass
 
-        time.sleep(stream.get_output_latency())
-        # tx2开发板get_output_latency是0.256s
+        time.sleep(stream.get_output_latency() * 2)
         stream.stop_stream()
         stream.close()
 
