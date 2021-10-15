@@ -14,11 +14,12 @@ import time
 from waker import Waker
 from audiohandler import Listener, Recorder, Player
 from utils.utils import bytes_to_wav_data, save_wav, get_answer, synonym_substitution
+from utils.asr_utils import ASRVoiceAI
 from utils.vision_utils import get_color_dict
 from utils.package_utils import (Package, groupSendPackage, transform_for_send, client_service)
-from api import (wav_bin_to_str, str_to_wav_bin_unblock, wav_bin_to_str_voiceai, str_to_wav_bin,
+from api import (str_to_wav_bin_unblock, str_to_wav_bin,
                  VoicePrint)
-from vision_perception import VisionPerception
+from vision_perception import K4aCamera
 from vision_perception.client_for_voice import InfoObtainer
 
 ######################################################################################################
@@ -46,7 +47,7 @@ SOCKET = ("0.0.0.0", 5588)  # 后端监听的端口
 HOST = "222.201.134.203"
 PORT = 17000
 PORT_INFO = 17001
-perception = VisionPerception(HOST, PORT)
+perception = K4aCamera(HOST, PORT)
 I = InfoObtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
@@ -128,6 +129,9 @@ class MainProcess(object):
         vpr = VoicePrint()
         self.player = Player(rate=OUTPUT_RATE)
         waker = Waker(EXPECTED_WORD)
+        # recorder跟asr用于interact()
+        self.recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
+        self.asr = ASRVoiceAI(INPUT_RATE)
 
         with tf.compat.v1.Session() as sess:
             # main loop
@@ -183,7 +187,6 @@ class MainProcess(object):
                     break
 
     def interact(self):
-        recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
         while True:
             print("Wait to be wakeup...")
             self.wakeup_event.wait()
@@ -192,7 +195,7 @@ class MainProcess(object):
                 self.is_playing = True
                 logger.info("Start recording...")
                 self.state = 1  # recording
-                wav_list, no_sound = recorder.record_auto()
+                wav_list, no_sound = self.recorder.record_auto()
                 logger.info("Stop recording.")
                 if no_sound:
                     logger.info("No sound detected, conversation canceled.")
@@ -236,19 +239,18 @@ class MainProcess(object):
 
                 t0 = time.time()
                 wav_data = bytes_to_wav_data(b"".join(wav_list))
-                recognized_str = wav_bin_to_str(wav_data)
-                # recognized_str = wav_bin_to_str_voiceai(wav_data)
+                recognized_str = self.asr.trans(wav_data)
                 print("近义词替换前：", recognized_str)
                 recognized_str = synonym_substitution(recognized_str)
                 print("近义词替换后：", recognized_str)
 
                 if len(recognized_str) == 0:
                     recognized_str = "(无人声)"
-                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
                 t1 = time.time()
                 print("recognition:", t1 - t0)
                 if len(recognized_str) == "(无人声)" or "没事" in recognized_str:
                     break
+                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
 
                 start = time.time()
                 response_word, self.sentences = get_answer(recognized_str, result["attribute"])

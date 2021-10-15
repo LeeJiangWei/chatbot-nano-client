@@ -18,14 +18,14 @@ from audiohandler import Listener, Recorder, Player
 from utils.utils import get_response, bytes_to_wav_data, save_wav
 from utils.vision_utils import get_color_dict
 from api import VoicePrint, str_to_wav_bin
-from vision_perception import VisionPerception
+from vision_perception import K4aCamera
 from vision_perception.client_for_voice import InfoObtainer
 import multiprocessing as mp
 
 HOST = "222.201.134.203"
 PORT = 17000
 PORT_INFO = 17001
-perception = VisionPerception(HOST, PORT)
+perception = K4aCamera(HOST, PORT)
 I = InfoObtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音

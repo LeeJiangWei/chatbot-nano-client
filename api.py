@@ -131,6 +131,7 @@ def receive_as_generator(sock):
 
 
 def wav_bin_to_str_voiceai(wav_data: bytes) -> str:
+    r"""voiceai ASR模块1.0版本的调用方式"""
     sock = socket.socket()
     sock.settimeout(3)  # 3s内没有收到服务端的翻译结果就断开，作为当我们客户端发送噪声片段时的一个容错手段，防止一直阻塞在这里
     sock.connect(("125.217.235.84", 8635))
