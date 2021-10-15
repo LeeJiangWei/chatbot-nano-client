@@ -1,4 +1,5 @@
 import io
+import re
 import time
 import wave
 
@@ -351,6 +352,32 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
     t3 = time.time()
     print("tts", t3 - t2)
     return recognized_str, response_list, wav_data_list
+
+
+def synonym_substitution(recognized_str):
+    for k, v in SYNONYM_TABLE.items():
+        recognized_str = recognized_str.replace(k, v)
+    return recognized_str
+
+
+def get_answer(input_text, visual_info):
+    r"""根据输入的文本，判断其意图并给出相应的答复
+    Return:
+        text (str): 回应的原始文本，用于发送给前端显示
+        sentences (list): 每个元素是一个句子的文本，用于转音频和播音
+    """
+    # 先前的设计是rasa的responses可能包含多个元素，比如调用api前回一句，调用api后再把真正的回复说出来，现在只是一轮回复，所以直接取[0]
+    response = api.question_to_answer(input_text)[0]
+    text = ""
+    if "text" in response.keys():
+        text = response["text"]
+    elif "custom" in response.keys():
+        text = visual_to_sentence(response["custom"], visual_info)
+
+    # 当回答包括多个句子时（常见于闲聊模式），文本太长会导致TTS服务器返回空数据，所以我们要自己把数据分段发送
+    sentence = re.split("；|？|。|,|！|!", text) if text else []
+
+    return text, sentence
 
 
 def bytes_to_wav_data(bytes_data, format=pyaudio.paInt16, channels=1, rate=16000):

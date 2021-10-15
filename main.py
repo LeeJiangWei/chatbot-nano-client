@@ -13,10 +13,11 @@ import time
 
 from waker import Waker
 from audiohandler import Listener, Recorder, Player
-from utils.utils import get_response, bytes_to_wav_data, save_wav
+from utils.utils import bytes_to_wav_data, save_wav, get_answer, synonym_substitution
 from utils.vision_utils import get_color_dict
 from utils.package_utils import (Package, groupSendPackage, transform_for_send, client_service)
-from api import VoicePrint, str_to_wav_bin
+from api import (wav_bin_to_str, str_to_wav_bin_unblock, wav_bin_to_str_voiceai, str_to_wav_bin,
+                 VoicePrint)
 from vision_perception import VisionPerception
 from vision_perception.client_for_voice import InfoObtainer
 
@@ -110,13 +111,14 @@ class MainProcess(object):
                                                ┌─没检测到唤醒词──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
         初始阶段：listener.listen()录制用户语音 ─┴─检测到唤醒词── 发送"你好米娅"文本到前端 ─── 进行声纹识别 ─── 发送欢迎文本到前端 ─── 播放欢迎语 ─── wakeup_event.set() ─── 继续listener.listen()
                                                                                     │ 主进程可以在record_auto()结束时、播放语音前或者播放语音时通过说唤醒词退出互动阶段
-        互动阶段：wakeup_event.set() ─── 进入interact_process循环 ─── recorder.record_auto()录制用户语音 ─── 向视觉模块获取信息 ─── 结合视觉信息向语音模块获取回复的音频数据 ─── player.play_unblock()播放语音回复 ─── wakeup_event.clear()
+        互动阶段：wakeup_event.set() ─── 进入interact_process循环 ─── recorder.record_auto()录制用户语音 ─── I.obtain()向视觉模块获取信息 ─── wav_bin_to_str()语音转文字 ─── get_answer()获取响应文本 ─── 边转音频边播放 ─── wakeup_event.clear()
         """
         self.wakeup_event = threading.Event()
         self.is_playing = False
         self.player_exit_event = threading.Event()
         self.all_exit_event = threading.Event()
         self.haddata = False  # 用于InfoObtainer的共享变量
+        self.finish_stt_event = threading.Event()  # 用于流式STT中判断STT是否已经结束
 
         inter_proc = threading.Thread(target=self.interact, args=())
         inter_proc.setDaemon(True)  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
@@ -201,13 +203,13 @@ class MainProcess(object):
                     self.wakeup_event.clear()
                     break
 
-                wav_data = bytes_to_wav_data(b"".join(wav_list))
                 logger.info("Waiting server...")
                 self.state = 3  # computing
 
                 # perception.send_single_image()
                 # self.haddata = False  # False要求重新向视觉模块获取视觉信息
                 # time.sleep(0.1)  # 给视觉模块时间重置信息
+                # TODO: I.obtain跟wav_bin_to_str是可以并行的，vodiceai转文字的时间比后面改成并行
                 data = {"require": "attribute"}
                 result = I.obtain(data, self.haddata)
                 self.haddata = True  # 获得过一次视觉信息之后，在下次重新唤醒之前就不需要重复获取了
@@ -232,16 +234,29 @@ class MainProcess(object):
                     # 赋值后就会自动把图像发给前端
                     self.detection_result = transform_for_send(fp.read())
 
-                recognized_str, response_list, wav_list = get_response(wav_data, result["attribute"])
-                logger.info("Recognize result: " + recognized_str)
+                t0 = time.time()
+                wav_data = bytes_to_wav_data(b"".join(wav_list))
+                recognized_str = wav_bin_to_str(wav_data)
+                # recognized_str = wav_bin_to_str_voiceai(wav_data)
+                print("近义词替换前：", recognized_str)
+                recognized_str = synonym_substitution(recognized_str)
+                print("近义词替换后：", recognized_str)
 
-                # haven't said anything but pass VAD.
-                if len(recognized_str) == 0 or "没事" in recognized_str:
-                    break
+                if len(recognized_str) == 0:
+                    recognized_str = "(无人声)"
                 groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+                t1 = time.time()
+                print("recognition:", t1 - t0)
+                if len(recognized_str) == "(无人声)" or "没事" in recognized_str:
+                    break
+
+                start = time.time()
+                response_word, self.sentences = get_answer(recognized_str, result["attribute"])
+                print("rasa:", time.time() - start)
 
                 # TODO: 把退出主程序的功能做好，现在没有实现预期功能
                 if recognized_str in ["退出。", "关机。"]:
+                    # out-of-date
                     print("退出互动环节...")
                     self.all_exit_event.set()
                     time.sleep(10)  # 坐等主进程退出
@@ -253,13 +268,27 @@ class MainProcess(object):
                     break
 
                 self.state = 2  # speaking
-                for r, w in zip(response_list, wav_list):
-                    logger.info(r)
-                    groupSendPackage(Package.response_word_result(r), self.clients)
-                    print("outer:", self.wakeup_event.is_set())
-                    save_wav(w, "tmp.wav", rate=self.player.rate)  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
-                    # self.player.play_unblock(w, self.wakeup_event)
-                    self.player.play(w)
+                self.finish_stt_event.clear()
+                self.wav_data_queue = []
+                thread_stt = threading.Thread(target=str_to_wav_bin_unblock, args=(self.sentences, self.wav_data_queue, self.finish_stt_event))
+                thread_stt.setDaemon(True)
+                thread_stt.start()
+
+                start = time.time()
+                sent_response = False  # 是否已经发送过智能系统的回答文本给到前端
+                # 当TTS尚未结束时，检查STT线程有没有生产wav data过来，有的话就拿去播放
+                # TODO:加入唤醒打断
+                while not self.finish_stt_event.is_set():
+                    while self.wav_data_queue:
+                        if not sent_response:
+                            # 第一个句子翻译完开始播音时就可以把所有句子都打印在前端，因为把一句话说完需要时间，在用户看来
+                            # 并不会觉得声音还没发出来字已经有了是违和的
+                            groupSendPackage(Package.response_word_result(response_word), self.clients)
+                            sent_response = True
+                        wav_data = self.wav_data_queue.pop(0)
+                        # self.player.play_unblock(w, self.wakeup_event)
+                        self.player.play(wav_data)
+                print("tts & play:", time.time() - start)
 
                 # 如果在播音时收到唤醒词，应当先从play的播放循环中跳出，然后来到这里，跳出互动阶段
                 if self.wakeup_event.is_set():

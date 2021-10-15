@@ -180,6 +180,25 @@ def str_to_wav_bin(input_str: str) -> bytes:
     return result
 
 
+def str_to_wav_bin_unblock(sentences, wav_data_queue, finish_stt_event) -> bytes:
+    r"""流式（非阻塞式）地输出每个句子的翻译结果，而不是所有句子翻译完才一起输出结果
+    Args:
+        sentences (list): member of MainProcess class, sentences to be STT
+        wav_data_queue (list): member of MainProcess class, a queue to input speech wav data after TTS
+        finish_stt_event (threading.Event()): event indicates whether STT is finished
+    """
+    base_url = "http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed=5.8&update=1&access_token=default&domain=1" \
+               "&language=zh&voice_name=Jingjingcc&&text= "
+    # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
+    while sentences:
+        sentence = sentences.pop(0)
+        r = requests.get(base_url + sentence)
+        wav_data_queue.append(r.content)
+    finish_stt_event.set()
+
+    return
+
+
 class VoicePrint:
     def __init__(self):
 

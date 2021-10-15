@@ -209,7 +209,7 @@ class Player:
         r"""非阻塞地播放一个音频流，期间允许被打断
         Args:
             wav_data (bytes): 音频流二进制数据
-            wakeup_event (thread.Event()): 唤醒事件，用于打断音频播放，传入None则相当于阻塞式播放
+            wakeup_event (threading.Event()): 唤醒事件，用于打断音频播放，传入None则相当于阻塞式播放
         """
         # NOTE:这个函数还是有问题，加了补足一整个块也还是有问题，延长get_output_latency的sleep时间也没有，说话时间还是那么长，
         # 只是说完之后停顿的时间变长了
