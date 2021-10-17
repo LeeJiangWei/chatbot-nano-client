@@ -241,7 +241,7 @@ class Player:
 
         # tqdm_iterator仅用于展示播音过程，不想看可以去掉
         # NOTE: 目前tqdm_iterator还有未知问题，有时候正常有时候会在next(tqdm_iterator)处抛出StopIteration异常，只好先不打开
-        # n_chunks = len(self.wav_data) // chunk_bytes
+        # n_chunks = round(len(self.wav_data) / self.chunk_bytes + 0.5)  # 等同于math.ceil，不想为了这个多import一个math
         # tqdm_iterator = iter(tqdm(range(n_chunks), "播音中"))
 
         # self.play_frames, prev = 0, 0
@@ -258,7 +258,7 @@ class Player:
         #     pass
 
         # tx2开发板get_output_latency是0.256s
-        # time.sleep(stream.get_output_latency())
+        time.sleep(stream.get_output_latency())
         stream.stop_stream()
         stream.close()
 
