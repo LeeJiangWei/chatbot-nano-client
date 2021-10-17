@@ -1,13 +1,13 @@
 import wave
 import time
-import multiprocessing
+import threading
 
 import audioop
 import pyaudio
 from tqdm import tqdm
 import webrtcvad
 
-CHUNK_LENGTH = 1024
+PLAYER_CHUNK_LENGTH = 1024
 RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
 LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
 
@@ -106,6 +106,7 @@ class Recorder:
             wav_list (list): 每个元素是一个块chunk的音频数据，wav_list[-1]是最近一个时刻录制的
             no_sound (bool): True表示本次录制没有录到声音，False表示录到了声音
         """
+        assert self.channels == 1, "VAD only support mono channel!"
         self.buffer = []
         # width = pyaudio.get_sample_size(self.pformat)
         # buffer_window_len = int(self.rate / self.chunk_length * max_silence_second)
@@ -116,7 +117,7 @@ class Recorder:
                                  input=True,
                                  frames_per_buffer=self.chunk_length)
 
-        vad = webrtcvad.Vad(mode=2)
+        vad = webrtcvad.Vad(mode=2)  # [0, 3]，0最容易给出是语音的判断，3最严格
         start_count = 0
         stop_count = 0
         exit_count = 0
@@ -124,12 +125,12 @@ class Recorder:
         stop_thr = 50  # 1.5s
         exit_thr = 333  # 10s
         while True:
-            chunk = stream.read(int(self.chunk_length * self.rate / 1000))  # 除以1000，把ms变成s
+            # stream.read()的参数是n_frames，不是n_bytes
+            chunk = stream.read(self.chunk_length * self.rate // 1000)  # 除以1000，把ms变成s
 
             # data = b''.join(self.buffer[-buffer_window_len:])
             # rms = audioop.rms(data, width)
             # print("%s\r" % rms)
-
             vad_flags = vad.is_speech(chunk, sample_rate=self.rate)
 
             # ready
@@ -163,11 +164,13 @@ class Recorder:
 
 
 class Player:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=8000):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=8000, chunk_length=PLAYER_CHUNK_LENGTH):
         # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
         self.pformat = pformat
         self.channels = channels
         self.rate = rate
+        self.chunk_length = chunk_length
+        self.chunk_bytes = chunk_length * channels * pyaudio.get_sample_size(self.pformat) # 一个块CHUNK里包含的字节数
 
         self.audio = pyaudio.PyAudio()
 
@@ -197,22 +200,34 @@ class Player:
 
     def _callback(self, in_data, frame_count, time_info, status):
         start = self.seek
-        chunk_length = frame_count * pyaudio.get_sample_size(self.pformat) * self.channels
-        self.seek += chunk_length
-
-        data = self.wav_data[start: self.seek]
         self.play_frames += 1
-
-        return data, pyaudio.paContinue
+        # (准确性待确认）wave_file 的读取就是双通道的, 单通道音频仅仅只是将另一通道置零, 而且python的bytes是16位的
+        # frame_count * 2 channels *  sample_size (16bits) / 2 (16bit)
+        # self.seek += int(frame_count * 2 * pyaudio.get_sample_size(self.pformat) / 2)
+        self.seek += int(frame_count * self.channels * pyaudio.get_sample_size(self.pformat))
+        # print(start, self.seek)
+        if self.seek < len(self.wav_data):
+            # paContinue表示后面还有数据
+            return self.wav_data[start:self.seek], pyaudio.paContinue
+        elif start < len(self.wav_data):  #  此块不足一整块，是最后一个块
+            ret = self.wav_data[start:]
+            # pad the last frame with zero to chunk_length and put signal pacontinue,
+            # or the pyaudio would not play it.
+            # ret = ret + b"\x00" * (frame_count * 2 - len(ret))
+            ret += b"\x00" * (self.chunk_bytes - len(ret))
+            # 完整且状态为paContinue的块才会被播放，这里文档是说最后一个块用paComplete，但是那样这个块播放不了，
+            # 我们还是要用paContinue并把这个块补全到完整长度
+            return ret, pyaudio.paContinue
+        else:
+            # paComplete表示这是音频数据的最后一个块block
+            return b"", pyaudio.paComplete
 
     def play_unblock(self, wav_data, wakeup_event=None):
         r"""非阻塞地播放一个音频流，期间允许被打断
         Args:
             wav_data (bytes): 音频流二进制数据
-            wakeup_event (threading.Event()): 唤醒事件，用于打断音频播放，传入None则相当于阻塞式播放
+            wakeup_event (threading.Event()): 唤醒事件，用于打断音频播放
         """
-        # NOTE:这个函数还是有问题，加了补足一整个块也还是有问题，延长get_output_latency的sleep时间也没有，说话时间还是那么长，
-        # 只是说完之后停顿的时间变长了
         self.wav_data = wav_data
         self.seek = 0  # 文件指针
 
@@ -220,15 +235,10 @@ class Player:
                                  channels=self.channels,
                                  rate=self.rate,
                                  output=True,
-                                 frames_per_buffer=CHUNK_LENGTH,
+                                 frames_per_buffer=self.chunk_length,
                                  stream_callback=self._callback)
         stream.start_stream()
 
-        chunk_bytes = CHUNK_LENGTH * self.channels * pyaudio.get_sample_size(self.pformat)  # 一个CHUNK所包含的字节数
-        # 回调函数返回不完整的块chunk时，stream将不播放该块并结束回调的死循环，因此在播放之前就把wav_data补足到块长度的整数倍
-        # 补足chunk_length个字节，第二个取余的目的是如果wav_data本来就是整数倍，就不需要额外加一个静音块
-        self.wav_data += b"\x00" * ((chunk_bytes - len(self.wav_data) % chunk_bytes) % chunk_bytes)
-        
         # tqdm_iterator仅用于展示播音过程，不想看可以去掉
         # NOTE: 目前tqdm_iterator还有未知问题，有时候正常有时候会在next(tqdm_iterator)处抛出StopIteration异常，只好先不打开
         # n_chunks = len(self.wav_data) // chunk_bytes
@@ -247,8 +257,8 @@ class Player:
         # for _ in tqdm_iterator:
         #     pass
 
-        time.sleep(stream.get_output_latency())
         # tx2开发板get_output_latency是0.256s
+        # time.sleep(stream.get_output_latency())
         stream.stop_stream()
         stream.close()
 
@@ -268,10 +278,39 @@ class Player:
             stream.close()
 
 
-if __name__ == "__main__":
-    # NOTE: out-of-date
+def test_player():
     player = Player(rate=16000)
     with wave.open("./juice2.wav", "rb") as wf:
         wav_data = wf.readframes(wf.getnframes())
-    event = multiprocessing.Event()
+    event = threading.Event()
     player.play_unblock(wav_data, event)
+
+
+def test_record_auto():
+    # record_auto only support mono channel
+    recorder = Recorder(rate=16000, channels=1)
+    player = Player(rate=16000, channels=1)
+    print("Recording...")
+    buffer, _ = recorder.record_auto()
+    time.sleep(0.5)  # 避免听说混淆
+    wav_data = b"".join(buffer)
+    print("Playing...")
+    player.play_unblock(wav_data)
+
+
+def test_record():
+    channels = 2
+    recorder = Recorder(rate=16000, channels=channels)
+    player = Player(rate=16000, channels=channels)
+    print("Recording...")
+    buffer = recorder.record()
+    time.sleep(0.5)  # 避免听说混淆
+    wav_data = b"".join(buffer)
+    print("Playing...")
+    player.play_unblock(wav_data)
+
+
+if __name__ == "__main__":
+    # test_player()
+    # test_record_auto()
+    test_record()

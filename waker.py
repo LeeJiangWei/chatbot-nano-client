@@ -46,7 +46,7 @@ W_SMOOTH = 5
 W_MAX = 10
 TOPK = 1
 class Waker:
-    def __init__(self, wakeup_word, threshold=0.6, w_smooth=W_SMOOTH, w_max=W_MAX):
+    def __init__(self, wakeup_word, threshold=0.5, w_smooth=W_SMOOTH, w_max=W_MAX):
         self.wakeup_word = wakeup_word
         self.threshold = threshold
         self.w_smooth = w_smooth

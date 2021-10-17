@@ -1,15 +1,16 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 import logging
 import socket
 import threading
 import time
+import random
 from PIL import Image, ImageDraw, ImageFont
 
 import pyaudio
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 把tensorflow的日志等级降低，不然输出一堆乱七八糟的东西
 import tensorflow as tf
-import time
 
 from waker import Waker
 from audiohandler import Listener, Recorder, Player
@@ -19,7 +20,7 @@ from utils.vision_utils import get_color_dict
 from utils.package_utils import (Package, groupSendPackage, transform_for_send, client_service)
 from api import (str_to_wav_bin_unblock, str_to_wav_bin,
                  VoicePrint)
-from vision_perception import K4aCamera
+from vision_perception import K4aCamera, NormalCamera
 from vision_perception.client_for_voice import InfoObtainer
 
 ######################################################################################################
@@ -48,6 +49,7 @@ HOST = "222.201.134.203"
 PORT = 17000
 PORT_INFO = 17001
 perception = K4aCamera(HOST, PORT)
+emotion_cam = NormalCamera(0, "emotion", HOST, PORT)
 I = InfoObtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
@@ -179,7 +181,7 @@ class MainProcess(object):
 
                 self.state = 2  # speaking
                 self.player_exit_event.clear()
-                self.player.play(wav)
+                self.player.play_unblock(wav)
                 self.wakeup_event.set()
 
                 if self.all_exit_event.is_set():  # 正常退出，不使用ctrl+C退出，不然相机老是出幺蛾子
@@ -289,7 +291,7 @@ class MainProcess(object):
                             sent_response = True
                         wav_data = self.wav_data_queue.pop(0)
                         # self.player.play_unblock(w, self.wakeup_event)
-                        self.player.play(wav_data)
+                        self.player.play_unblock(wav_data)
                 print("tts & play:", time.time() - start)
 
                 # 如果在播音时收到唤醒词，应当先从play的播放循环中跳出，然后来到这里，跳出互动阶段
@@ -321,5 +323,5 @@ def main():
         t.start()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
