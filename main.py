@@ -16,6 +16,7 @@ from waker import Waker
 from audiohandler import Listener, Recorder, Player
 from utils.utils import bytes_to_wav_data, save_wav, get_answer, synonym_substitution
 from utils.asr_utils import ASRVoiceAI
+from utils.tts_utils import TTSBiaobei
 from utils.vision_utils import get_color_dict
 from utils.package_utils import (Package, groupSendPackage, transform_for_send, client_service)
 from api import (str_to_wav_bin_unblock, str_to_wav_bin,
@@ -134,6 +135,7 @@ class MainProcess(object):
         # recorder跟asr用于interact()
         self.recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
         self.asr = ASRVoiceAI(INPUT_RATE)
+        self.tts = TTSBiaobei()
 
         with tf.compat.v1.Session() as sess:
             # main loop
@@ -295,26 +297,10 @@ class MainProcess(object):
                     break
 
                 self.state = 2  # speaking
-                self.finish_stt_event.clear()
-                self.wav_data_queue = []
-                thread_stt = threading.Thread(target=str_to_wav_bin_unblock, args=(self.sentences, self.wav_data_queue, self.finish_stt_event))
-                thread_stt.setDaemon(True)
-                thread_stt.start()
-
+                groupSendPackage(Package.response_word_result(response_word), self.clients)
                 start = time.time()
-                sent_response = False  # 是否已经发送过智能系统的回答文本给到前端
-                # 当TTS尚未结束时，检查STT线程有没有生产wav data过来，有的话就拿去播放
-                # TODO:加入唤醒打断
-                while not self.finish_stt_event.is_set():
-                    while self.wav_data_queue:
-                        if not sent_response:
-                            # 第一个句子翻译完开始播音时就可以把所有句子都打印在前端，因为把一句话说完需要时间，在用户看来
-                            # 并不会觉得声音还没发出来字已经有了是违和的
-                            groupSendPackage(Package.response_word_result(response_word), self.clients)
-                            sent_response = True
-                        wav_data = self.wav_data_queue.pop(0)
-                        # self.player.play_unblock(w, self.wakeup_event)
-                        self.player.play_unblock(wav_data)
+                ws = self.tts.start_tts(response_word)
+                self.player.play_unblock_ws(ws)
                 print("tts & play:", time.time() - start)
 
                 # 如果在播音时收到唤醒词，应当先从play的播放循环中跳出，然后来到这里，跳出互动阶段

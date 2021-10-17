@@ -171,13 +171,17 @@ class ASRVoiceAI:
         )
         # 这种写法就很奇怪，什么东西都往自己的成员类里面塞，而不是塞到自己身上，但是没办法，调用on_系列函数的主体还是self.ws
         self.ws.rate = rate
-        self.ws.wav_data = b""  # 准备进行ASR的音频数据
-        self.ws.asr_result = ""  # ASR结果
+        self.reset()
 
     def trans(self, wav_data):
+        self.reset()
         self.ws.wav_data = wav_data
         self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})  # 开启长连接，每run_forever一次就是执行了从on_open到on_close的整一套流程
         return self.ws.asr_result
+
+    def reset(self):
+        self.ws.wav_data = b""  # 准备进行ASR的音频数据
+        self.ws.asr_result = ""  # ASR结果
 
 if __name__ == "__main__":
     # test_simple()

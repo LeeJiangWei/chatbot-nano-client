@@ -92,6 +92,7 @@ class TTSBiaobei:
             on_error=on_error,
             on_close=on_close
         )
+        self.reset()
 
     def start_tts(self, text):
         # 把整个websocket对象都给返回出去了，后面拿着它去访问wav_data
