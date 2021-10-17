@@ -168,6 +168,28 @@ class MainProcess(object):
                     spk_name = vpr.get_spk_name(wav_data)
                     print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
                     response_str = spk_name + "你好!"
+
+                    # 针对用户情绪，在原有的欢迎语上添加对应的句子
+                    emotion_cam.send_single_image()
+                    data = {"require": "emotion"}
+                    result = I.obtain(data, False)
+                    print("情绪识别结果：", result["emotion"])
+                    welcome_word_suffix = {  # 分开心、不开心、平静三类
+                        "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词 "],
+                        "happy": ["你看起来心情不错", "你看起来很开心，我猜是捡到钱了", "你笑起来真好看", "你的笑容让我沉醉"],
+                        "unhappy": ["你看起来似乎不太开心", "你的心情有些低落呢，给你讲个笑话好不好", "别生气啦，来杯咖啡压压惊", "压力大就要学会放松心情"]
+                        }
+                    if result["emotion"] in ["neutral"]:  # calm
+                        response_str += random.choice(welcome_word_suffix["neutral"])
+                    elif result["emotion"] in ["happiness"]:  # happy
+                        response_str += random.choice(welcome_word_suffix["happy"])
+                    elif result["emotion"] in ["surprise", "fear", "digust", "sadness", "anger"]:  # unhappy
+                        response_str += random.choice(welcome_word_suffix["unhappy"])
+                    elif result["emotion"] == "not_detected":
+                        pass
+                    else:
+                        raise ValueError(f"Unrecognized emotion: {result['emotion']}")
+
                     wav = str_to_wav_bin(response_str)
                 # interrupt
                 elif self.is_playing:
