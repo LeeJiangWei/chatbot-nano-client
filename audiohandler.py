@@ -11,6 +11,9 @@ PLAYER_CHUNK_LENGTH = 1024
 RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
 LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
 
+from utils.tts_utils import TTSBiaobei
+
+
 class Listener:
     def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=LISTENER_CHUNK_LENGTH, listen_seconds=1):
         # should match KWS module
@@ -198,14 +201,25 @@ class Player:
         stream.stop_stream()
         stream.close()
 
+    def play_wav(self, path):
+        r"""打开一个音频文件，从头到尾播放完
+        Args:
+            path (str): path of audio file
+        """
+        with wave.open(path) as wf:
+            stream = self.audio.open(format=
+                                     self.audio.get_format_from_width(wf.getsampwidth()),
+                                     channels=wf.getnchannels(),
+                                     rate=wf.getframerate(),
+                                     output=True)
+            stream.write(wf.readframes(wf.getnframes()))
+            stream.stop_stream()
+            stream.close()
+
     def _callback(self, in_data, frame_count, time_info, status):
         start = self.seek
         self.play_frames += 1
-        # (准确性待确认）wave_file 的读取就是双通道的, 单通道音频仅仅只是将另一通道置零, 而且python的bytes是16位的
-        # frame_count * 2 channels *  sample_size (16bits) / 2 (16bit)
-        # self.seek += int(frame_count * 2 * pyaudio.get_sample_size(self.pformat) / 2)
         self.seek += int(frame_count * self.channels * pyaudio.get_sample_size(self.pformat))
-        # print(start, self.seek)
         if self.seek < len(self.wav_data):
             # paContinue表示后面还有数据
             return self.wav_data[start:self.seek], pyaudio.paContinue
@@ -213,7 +227,6 @@ class Player:
             ret = self.wav_data[start:]
             # pad the last frame with zero to chunk_length and put signal pacontinue,
             # or the pyaudio would not play it.
-            # ret = ret + b"\x00" * (frame_count * 2 - len(ret))
             ret += b"\x00" * (self.chunk_bytes - len(ret))
             # 完整且状态为paContinue的块才会被播放，这里文档是说最后一个块用paComplete，但是那样这个块播放不了，
             # 我们还是要用paContinue并把这个块补全到完整长度
@@ -221,6 +234,29 @@ class Player:
         else:
             # paComplete表示这是音频数据的最后一个块block
             return b"", pyaudio.paComplete
+
+    def _callback_ws(self, in_data, frame_count, time_info, status):
+        # TODO: 看看有没有办法让TTS模块一次收到刚好一个CHUNK的数据，这样就不用做bytes的相加操作，直接在list里取，
+        # 这样才快而且省内存
+        start = self.seek
+        self.play_frames += 1
+        self.seek += int(frame_count * self.channels * pyaudio.get_sample_size(self.pformat))
+        if self.seek < len(self.ws.wav_data):
+            # paContinue表示后面还有数据
+            return self.ws.wav_data[start:self.seek], pyaudio.paContinue
+        elif start < len(self.ws.wav_data):  #  此块不足一整块，是最后一个块
+            ret = self.ws.wav_data[start:]
+            # pad the last frame with zero to chunk_length and put signal pacontinue,
+            # or the pyaudio would not play it.
+            ret += b"\x00" * (self.chunk_bytes - len(ret))
+            # 完整且状态为paContinue的块才会被播放，这里文档是说最后一个块用paComplete，但是那样这个块播放不了，
+            # 我们还是要用paContinue并把这个块补全到完整长度
+            return ret, pyaudio.paContinue
+        elif not self.ws.finish_tts:  # 因为网络原因导致现在没有数据，但还有一些数据在路上
+            return b"\x00" * self.chunk_bytes, pyaudio.paContinue
+        else:
+            # paComplete表示这是音频数据的最后一个块block
+            return b"", pyaudio.paComplete            
 
     def play_unblock(self, wav_data, wakeup_event=None):
         r"""非阻塞地播放一个音频流，期间允许被打断
@@ -262,25 +298,38 @@ class Player:
         stream.stop_stream()
         stream.close()
 
-    def play_wav(self, path):
-        r"""打开一个音频文件，从头到尾播放完
+    def play_unblock_ws(self, ws, wakeup_event=None):
+        r"""非阻塞地播放一个音频流，期间允许被打断。这里传进来的不是音频数据，而是一个WebSocket对象，它
+        在一边加载数据的同时，这边也在持续播放音频
         Args:
-            path (str): path of audio file
+            ws (websocket.WebSocketApp): 用来获取音频数据流的对象
+            wakeup_event (threading.Event()): 唤醒事件，用于打断音频播放
         """
-        with wave.open(path) as wf:
-            stream = self.audio.open(format=
-                                     self.audio.get_format_from_width(wf.getsampwidth()),
-                                     channels=wf.getnchannels(),
-                                     rate=wf.getframerate(),
-                                     output=True)
-            stream.write(wf.readframes(wf.getnframes()))
-            stream.stop_stream()
-            stream.close()
+        self.ws = ws
+        self.seek = 0  # 文件指针
 
+        stream = self.audio.open(format=self.pformat,
+                                 channels=self.channels,
+                                 rate=self.rate,
+                                 output=True,
+                                 frames_per_buffer=self.chunk_length,
+                                 stream_callback=self._callback_ws)
+        stream.start_stream()
+
+        while len(self.ws.wav_data) <= 0:  # 等待TTS服务器给到第一个数据包
+            time.sleep(0.1)
+
+        while stream.is_active():
+            time.sleep(0.1)
+
+        # tx2开发板get_output_latency是0.256s
+        # time.sleep(stream.get_output_latency())
+        stream.stop_stream()
+        stream.close()
 
 def test_player():
     player = Player(rate=16000)
-    with wave.open("./juice2.wav", "rb") as wf:
+    with wave.open("./tmp2.wav", "rb") as wf:
         wav_data = wf.readframes(wf.getnframes())
     event = threading.Event()
     player.play_unblock(wav_data, event)
@@ -299,7 +348,7 @@ def test_record_auto():
 
 
 def test_record():
-    channels = 2
+    channels = 1
     recorder = Recorder(rate=16000, channels=channels)
     player = Player(rate=16000, channels=channels)
     print("Recording...")
@@ -308,9 +357,21 @@ def test_record():
     wav_data = b"".join(buffer)
     print("Playing...")
     player.play_unblock(wav_data)
+    from utils.utils import save_wav
+    print(len(wav_data))
+    save_wav(wav_data, "tmp2.wav", channels=channels, rate=16000)
+
+
+def test_play_unblock_ws():
+    text = "妈妈给六岁的儿子出算术题做。“你一共有六个苹果，爸爸拿走两个，妈妈拿走四个，你还剩几个苹果？”儿子听后很激动说：“我真的是亲生的吗？”"
+    tts = TTSBiaobei()
+    player = Player(rate=8000)
+    ws = tts.start_tts(text)
+    player.play_unblock_ws(ws)
 
 
 if __name__ == "__main__":
-    # test_player()
+    # test_record()
     # test_record_auto()
-    test_record()
+    # test_player()
+    test_play_unblock_ws()

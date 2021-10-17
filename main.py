@@ -48,7 +48,7 @@ SOCKET = ("0.0.0.0", 5588)  # 后端监听的端口
 HOST = "222.201.134.203"
 PORT = 17000
 PORT_INFO = 17001
-perception = K4aCamera(HOST, PORT)
+scene_cam = K4aCamera(HOST, PORT)
 emotion_cam = NormalCamera(0, "emotion", HOST, PORT)
 I = InfoObtainer(HOST, PORT_INFO)
 
@@ -148,7 +148,7 @@ class MainProcess(object):
                     waker.update(wav_data, sess, PLOT)
 
                 waker.reset()  # 重置waker的置信度等参数，使其下轮循环能重新进入内层while循环，等待下一次唤醒
-                perception.send_single_image()
+                scene_cam.send_single_image()
                 self.haddata = False  # False要求重新向视觉模块获取视觉信息
                 listener.stop()
                 print("WAKEUP!")
@@ -185,7 +185,7 @@ class MainProcess(object):
                         response_str += random.choice(welcome_word_suffix["happy"])
                     elif result["emotion"] in ["surprise", "fear", "digust", "sadness", "anger"]:  # unhappy
                         response_str += random.choice(welcome_word_suffix["unhappy"])
-                    elif result["emotion"] == "not_detected":
+                    elif result["emotion"] == "no_face":
                         pass
                     else:
                         raise ValueError(f"Unrecognized emotion: {result['emotion']}")
@@ -233,7 +233,7 @@ class MainProcess(object):
                 logger.info("Waiting server...")
                 self.state = 3  # computing
 
-                # perception.send_single_image()
+                # scene_cam.send_single_image()
                 # self.haddata = False  # False要求重新向视觉模块获取视觉信息
                 # time.sleep(0.1)  # 给视觉模块时间重置信息
                 # TODO: I.obtain跟wav_bin_to_str是可以并行的，vodiceai转文字的时间比后面改成并行
@@ -246,7 +246,7 @@ class MainProcess(object):
                     for item in result["attribute"]:
                         fp.write(str(item) + "\n")
 
-                img = Image.open(perception.savepath).convert("RGB")
+                img = Image.open(scene_cam.savepath).convert("RGB")
                 drawer = ImageDraw.ImageDraw(img)
                 fontsize = 13
                 font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
@@ -272,8 +272,9 @@ class MainProcess(object):
                     recognized_str = "(无人声)"
                 t1 = time.time()
                 print("recognition:", t1 - t0)
-                if len(recognized_str) == "(无人声)" or "没事" in recognized_str:
+                if recognized_str == "(无人声)" or "没事" in recognized_str:
                     break
+                recognized_str = recognized_str.replace("~", "")
                 groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
 
                 start = time.time()

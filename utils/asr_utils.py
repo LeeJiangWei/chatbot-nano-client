@@ -57,7 +57,8 @@ def on_close(self, status_code, close_msg):
         status_code (int): 状态码，如1000, 1011
         close_msg (str): 返回的信息，貌似正常关闭时都是个空字符串
     """
-    print("------------------------------- CLOSE ")
+    pass
+    # print("------------------------------- CLOSE ")
 
 
 def run(ws):

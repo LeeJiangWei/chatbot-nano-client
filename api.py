@@ -168,13 +168,15 @@ def question_to_answer(message: str, sender: str = "nano"):
 
 
 def str_to_wav_bin(input_str: str) -> bytes:
+    # speed: 语速，[0.0, 9.0]，默认5.0
     base_url = "http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed=5.8&update=1&access_token=default&domain=1" \
                "&language=zh&voice_name=Jingjingcc&&text= "
     # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
+    # NOTE: 据说语音名称改成Jingjing就可以16K了，不过我还没试
     # 当回答包括多个句子时（常见于闲聊模式），文本太长会导致对面返回空数据，所以我们要自己把数据分段发送
     result = b""
     for sentence in re.split("；|？|。|,|！|!", input_str):
-        if sentence:
+        if sentence:  # GET方法限制不超过250 UTF-8字符，超过就会返回空数据，太多要用POST
             r = requests.get(base_url + sentence)
             # r = requests.post(TTS_URL, json={"text": input_str})
             result += r.content
@@ -193,6 +195,7 @@ def str_to_wav_bin_unblock(sentences, wav_data_queue, finish_stt_event) -> bytes
     # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
     while sentences:
         sentence = sentences.pop(0)
+        # GET方法限制不超过250 UTF-8字符，超过就会返回空数据，太多要用POST
         r = requests.get(base_url + sentence)
         wav_data_queue.append(r.content)
     finish_stt_event.set()

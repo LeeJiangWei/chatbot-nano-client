@@ -373,6 +373,7 @@ def get_answer(input_text, visual_info):
         text = response["text"]
     elif "custom" in response.keys():
         text = visual_to_sentence(response["custom"], visual_info)
+    text = text.replace("~", "")  # ~符号在句子末尾时TTS模块会给出突然的静音，用户体验不好（在句子中间倒还算正常）
 
     # 当回答包括多个句子时（常见于闲聊模式），文本太长会导致TTS服务器返回空数据，所以我们要自己把数据分段发送
     sentence = re.split("；|？|。|,|！|!", text) if text else []
