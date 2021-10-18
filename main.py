@@ -19,9 +19,9 @@ from utils.utils import (bytes_to_wav_data, save_wav,
 from utils.asr_utils import ASRVoiceAI
 from utils.tts_utils import TTSBiaobei
 from utils.vision_utils import get_color_dict
-from utils.package_utils import (Package, groupSendPackage, transform_for_send, client_service)
-from api import (str_to_wav_bin_unblock, str_to_wav_bin,
-                 VoicePrint)
+from utils.package_utils import (Package, groupSendPackage, transform_for_send,
+    client_service)
+from api import VoicePrint
 from vision_perception import K4aCamera, NormalCamera
 from vision_perception.client_for_voice import InfoObtainer
 from vision_perception.client import get_visual_info
@@ -42,9 +42,9 @@ from vision_perception.client import get_visual_info
 
 # real time state:
 #   INITIALIZATION\EXIT-SPEAKING\EXIT-READING: 0
-#   START-SPEAKING: 1
-#   START-READING:  2
-#   COMPUTING:      3
+#   START-SPEAKING: 1  用户开始说话
+#   START-READING:  2  机器开始播音
+#   COMPUTING:      3  后端正在推理
 
 SOCKET = ("0.0.0.0", 5588)  # 后端监听的端口
 
@@ -94,16 +94,22 @@ class MainProcess(object):
         return
 
     def start_speech(self):
+        # 前端发送"开始说话"指令时，后端会执行该函数
+        # 暂时没有用到，不管
         if self.state == 0:
             self.state = 1
         return
 
     def close_speech(self):
+        # 前端发送"停止说话"指令时，后端会执行该函数
+        self.interrupt_event.set()
         if self.state == 1:
             self.state = 0
         return
 
     def close_reading(self):
+        # 前端发送"停止录音"指令时，后端会执行该函数
+        self.interrupt_event.set()
         if self.state == 2:
             self.state = 0
         return
@@ -116,18 +122,10 @@ class MainProcess(object):
                                                                                     │ 主进程可以在record_auto()结束时、播放语音前或者播放语音时通过说唤醒词退出互动阶段
         互动阶段：wakeup_event.set() ─── 进入interact_process循环 ─── recorder.record_auto()录制用户语音 ─── I.obtain()向视觉模块获取信息 ─── wav_bin_to_str()语音转文字 ─── get_answer()获取响应文本 ─── 边转音频边播放 ─── wakeup_event.clear()
         """
-        self.wakeup_event = threading.Event()
-        self.is_playing = False
-        self.player_exit_event = threading.Event()
-        self.all_exit_event = threading.Event()
-        self.haddata = False  # 用于InfoObtainer的共享变量
         self.finish_stt_event = threading.Event()  # 用于流式STT中判断STT是否已经结束
+        self.interrupt_event = threading.Event()  # 用于判断是否收到键盘的打断信号
 
         self.visual_info = {}  # 用于后续接收语音信息，若不初始化会在get_visual_info时报错
-
-        inter_proc = threading.Thread(target=self.interact, args=())
-        inter_proc.setDaemon(True)  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
-        inter_proc.start()
 
         listener = Listener(FORMAT, CHANNELS, INPUT_RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
         vpr = VoicePrint()
@@ -155,172 +153,130 @@ class MainProcess(object):
                     waker.update(wav_data, sess, PLOT)
 
                 waker.reset()  # 重置waker的置信度等参数，使其下轮循环能重新进入内层while循环，等待下一次唤醒
-                self.scene_cam.send_single_image()
-                self.haddata = False  # False要求重新向视觉模块获取视觉信息
                 listener.stop()
                 print("WAKEUP!")
 
                 # save_wav(b"".join(frames), "tmp.wav")  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
+
                 # wakeup
-                if not self.is_playing:
-                    recognized_str = "你好米娅"
-                    # 将用户输入的语音转换成文字的结果群发给每个前端
-                    groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
-                    # 如果STT（语音转文字）异常，通过置success=False向前端传达出错了的信号
-                    # groupSendPackage(Package.voice_to_word_result("STT出错", success=False), self.clients)  # 具体错误可以具体写
-                    # self.state = 0
+                recognized_str = "你好米娅"
+                # 将用户输入的语音转换成文字的结果群发给每个前端
+                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+                # 如果STT（语音转文字）异常，通过置success=False向前端传达出错了的信号
+                # groupSendPackage(Package.voice_to_word_result("STT出错", success=False), self.clients)  # 具体错误可以具体写
+                # self.state = 0
 
-                    t1 = time.time()
-                    spk_name = vpr.get_spk_name(wav_data)
-                    print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
-                    response_str = spk_name + "你好!"
+                t1 = time.time()
+                spk_name = vpr.get_spk_name(wav_data)
+                print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
+                response_str = spk_name + "你好!"
 
-                    # 针对用户情绪，在原有的欢迎语上添加对应的句子
-                    self.emotion_cam.send_single_image()
-                    data = {"require": "emotion"}
-                    result = self.I.obtain(data, False)
-                    print("情绪识别结果：", result["emotion"])
-                    welcome_word_suffix = {  # 分开心、不开心、平静三类
-                        "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词 "],
-                        "happy": ["你看起来心情不错", "你看起来很开心，我猜是捡到钱了", "你笑起来真好看", "你的笑容让我沉醉"],
-                        "unhappy": ["你看起来似乎不太开心", "你的心情有些低落呢，给你讲个笑话好不好", "别生气啦，来杯咖啡压压惊", "压力大就要学会放松心情"]
-                        }
-                    if result["emotion"] in ["neutral"]:  # calm
-                        response_str += random.choice(welcome_word_suffix["neutral"])
-                    elif result["emotion"] in ["happiness"]:  # happy
-                        response_str += random.choice(welcome_word_suffix["happy"])
-                    elif result["emotion"] in ["surprise", "fear", "digust", "sadness", "anger"]:  # unhappy
-                        response_str += random.choice(welcome_word_suffix["unhappy"])
-                    elif result["emotion"] == "no_face":
-                        pass
-                    else:
-                        raise ValueError(f"Unrecognized emotion: {result['emotion']}")
-
-                    wav = str_to_wav_bin(response_str)
-                # interrupt
-                elif self.is_playing:
-                    self.wakeup_event.set()
-                    response_str = "我在。"
-                    wav = str_to_wav_bin(response_str)
-                    self.player_exit_event.wait()
-                    # NOTE: 如果交互过程中听到唤醒词，在交互环节播音结束后会来到这里，此时本应重新监听唤醒词，
-                    # 结果却直接播放了“我在”，这是不合理的，因此要返回去重新监听
-                    # TODO: 这个唤醒打断真的太麻烦了！下一个版本改用按键打断，不要整这个了，乱七八糟
-                    continue
+                # 针对用户情绪，在原有的欢迎语上添加对应的句子
+                self.emotion_cam.send_single_image()
+                data = {"require": "emotion"}
+                result = self.I.obtain(data, False)
+                print("情绪识别结果：", result["emotion"])
+                welcome_word_suffix = {  # 分开心、不开心、平静三类
+                    "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词 "],
+                    "happy": ["你看起来心情不错", "你看起来很开心，我猜是捡到钱了", "你笑起来真好看", "你的笑容让我沉醉"],
+                    "unhappy": ["你看起来似乎不太开心", "你的心情有些低落呢，给你讲个笑话好不好", "别生气啦，来杯咖啡压压惊", "压力大就要学会放松心情"]
+                    }
+                if result["emotion"] in ["neutral"]:  # calm
+                    response_str += random.choice(welcome_word_suffix["neutral"])
+                elif result["emotion"] in ["happiness"]:  # happy
+                    response_str += random.choice(welcome_word_suffix["happy"])
+                elif result["emotion"] in ["surprise", "fear", "digust", "sadness", "anger"]:  # unhappy
+                    response_str += random.choice(welcome_word_suffix["unhappy"])
+                elif result["emotion"] == "no_face":
+                    pass
+                else:
+                    raise ValueError(f"Unrecognized emotion: {result['emotion']}")
 
                 # 将智能系统回答的文本群发给每个前端
                 groupSendPackage(Package.response_word_result(response_str), self.clients)
 
-                self.state = 2  # speaking
-                self.player_exit_event.clear()
-                self.player.play_unblock(wav)
-                self.wakeup_event.set()
+                self.state = 2  # robot speaking
+                ws = self.tts.start_tts(response_str)
+                self.interrupt_event.clear()
+                self.player.play_unblock_ws(ws, self.interrupt_event)
 
-                if self.all_exit_event.is_set():  # 正常退出，不使用ctrl+C退出，不然相机老是出幺蛾子
-                    print("退出主程序。")
-                    break
+                # 进入互动环节，这个版本互动跟等待唤醒是分开的，不会相互纠缠，也没有唤醒词打断功能，只支持按键打断
+                self.interact()
 
     def interact(self):
         while True:
-            print("Wait to be wakeup...")
-            self.wakeup_event.wait()
-            self.wakeup_event.clear()
-            while True:
-                self.is_playing = True
-                logger.info("Start recording...")
-                self.state = 1  # recording
+            logger.info("Start recording...")
 
-                # 在录音之前把图片发给视觉模块，录音结束差不多就能收到识别结果了（视觉模块处理时间2~3s）
-                # temporary thread -> tmpt
-                tmpt = threading.Thread(target=get_visual_info, args=(self,))
-                tmpt.setDaemon(True)
-                tmpt.start()
+            # 在录音之前把图片发给视觉模块，录音结束差不多就能收到识别结果了（视觉模块处理时间2~3s）
+            # temporary thread -> tmpt
+            tmpt = threading.Thread(target=get_visual_info, args=(self,))
+            tmpt.setDaemon(True)
+            tmpt.start()
 
-                wav_list, no_sound = self.recorder.record_auto()
-                logger.info("Stop recording.")
-                if no_sound:
-                    logger.info("No sound detected, conversation canceled.")
-                    break
+            self.state = 1  # human speaking
+            # 根据环境音量自动录制一段有声音的音频，支持外部打断
+            self.interrupt_event.clear()  # 每次用一个事件之前都要先clear，防止是前面留下来的
+            wav_list, no_sound = self.recorder.record_auto(interrupt_event=self.interrupt_event)
+            logger.info("Stop recording.")
+            if no_sound:
+                logger.info("No sound detected, conversation canceled.")
+                break
 
-                # 如果在录音的过程中收到唤醒词（比如唤醒之后说的还是唤醒词），录音结束后将来到这里，应当不对录音内容做互动处理，跳出互动阶段
-                if self.wakeup_event.is_set():
-                    self.wakeup_event.clear()
-                    break
+            logger.info("Waiting server...")
+            self.state = 3  # computing
 
-                logger.info("Waiting server...")
-                self.state = 3  # computing
+            while not self.visual_info:  # 等待直到visual_info非空，也即收到视觉模块的回复
+                time.sleep(0.1)
 
-                while not self.visual_info:  # 等待直到visual_info非空，也即收到视觉模块的回复
-                    time.sleep(0.1)
+            with open("visual_info.txt", "w") as fp:
+                fp.write("时间戳:" + self.visual_info["timestamp"] + "\n")
+                for item in self.visual_info["attribute"]:
+                    fp.write(str(item) + "\n")
 
-                with open("visual_info.txt", "w") as fp:
-                    fp.write("时间戳:" + self.visual_info["timestamp"] + "\n")
-                    for item in self.visual_info["attribute"]:
-                        fp.write(str(item) + "\n")
+            img = Image.open(self.scene_cam.savepath).convert("RGB")
+            drawer = ImageDraw.ImageDraw(img)
+            fontsize = 13
+            font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
+            for attr in self.visual_info["attribute"]:
+                # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
+                # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+                drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
+                # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
+                drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
+            img.save("tmp2.jpg")
+            with open("tmp2.jpg", "rb") as fp:
+                # 赋值后就会自动把图像发给前端
+                self.detection_result = transform_for_send(fp.read())
 
-                img = Image.open(self.scene_cam.savepath).convert("RGB")
-                drawer = ImageDraw.ImageDraw(img)
-                fontsize = 13
-                font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
-                for attr in self.visual_info["attribute"]:
-                    # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
-                    # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
-                    drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
-                    # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
-                    drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
-                img.save("tmp2.jpg")
-                with open("tmp2.jpg", "rb") as fp:
-                    # 赋值后就会自动把图像发给前端
-                    self.detection_result = transform_for_send(fp.read())
+            t0 = time.time()
+            wav_data = bytes_to_wav_data(b"".join(wav_list))
+            recognized_str = self.asr.trans(wav_data)
+            print("近义词替换前：", recognized_str)
+            recognized_str = synonym_substitution(recognized_str)
+            print("近义词替换后：", recognized_str)
 
-                t0 = time.time()
-                wav_data = bytes_to_wav_data(b"".join(wav_list))
-                recognized_str = self.asr.trans(wav_data)
-                print("近义词替换前：", recognized_str)
-                recognized_str = synonym_substitution(recognized_str)
-                print("近义词替换后：", recognized_str)
+            if len(remove_punctuation(recognized_str)) <= 1:  # 去掉一些偶然的噪声被识别为“嗯”等单字导致误判有人说话的情况
+                recognized_str = "(无人声)"
+            t1 = time.time()
+            print("recognition:", t1 - t0)
+            if recognized_str == "(无人声)" or "没事" in recognized_str:
+                break
+            recognized_str = recognized_str.replace("~", "")
+            groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
 
-                if len(remove_punctuation(recognized_str)) <= 1:  # 去掉一些偶然的噪声被识别为“嗯”等单字导致误判有人说话的情况
-                    recognized_str = "(无人声)"
-                t1 = time.time()
-                print("recognition:", t1 - t0)
-                if recognized_str == "(无人声)" or "没事" in recognized_str:
-                    break
-                recognized_str = recognized_str.replace("~", "")
-                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+            start = time.time()
+            response_word, self.sentences = get_answer(recognized_str, self.visual_info["attribute"])
+            print("rasa:", time.time() - start)
 
-                start = time.time()
-                response_word, self.sentences = get_answer(recognized_str, self.visual_info["attribute"])
-                print("rasa:", time.time() - start)
+            self.state = 2  # robot speaking
+            groupSendPackage(Package.response_word_result(response_word), self.clients)
+            start = time.time()
+            ws = self.tts.start_tts(response_word)
+            self.interrupt_event.clear()
+            self.player.play_unblock_ws(ws, self.interrupt_event)
+            print("tts & play:", time.time() - start)
 
-                # TODO: 把退出主程序的功能做好，现在没有实现预期功能
-                if recognized_str in ["退出。", "关机。"]:
-                    # out-of-date
-                    print("退出互动环节...")
-                    self.all_exit_event.set()
-                    time.sleep(10)  # 坐等主进程退出
-                    break
-
-                # 如果在准备回复内容的过程中收到唤醒词，回复内容准备好之后将来到这里，应当不继续播音，跳出互动阶段
-                if self.wakeup_event.is_set():
-                    self.wakeup_event.clear()
-                    break
-
-                self.state = 2  # speaking
-                groupSendPackage(Package.response_word_result(response_word), self.clients)
-                start = time.time()
-                ws = self.tts.start_tts(response_word)
-                self.player.play_unblock_ws(ws)
-                print("tts & play:", time.time() - start)
-
-                # 如果在播音时收到唤醒词，应当先从play的播放循环中跳出，然后来到这里，跳出互动阶段
-                if self.wakeup_event.is_set():
-                    self.wakeup_event.clear()
-                    break
-
-            self.state = 0  # waiting
-            self.player_exit_event.set()
-            self.is_playing = False
+        self.state = 0  # waiting
 
 
 def main():

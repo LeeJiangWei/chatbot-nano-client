@@ -97,7 +97,7 @@ class Recorder:
 
         return self.buffer
 
-    def record_auto(self, silence_threshold=200, max_silence_second=1):
+    def record_auto(self, interrupt_event=None, silence_threshold=200, max_silence_second=1):
         r"""根据外部环境的声音强度，智能录制有声音的片段。
         连续收到start_thr个有声块(chunk)就认为有人声，开始正式录音（这start_thr个块的数据也会保留）；
         开始录音后连续收到stop_thr个无声块就认为录音结束，退出录音；
@@ -128,6 +128,10 @@ class Recorder:
         stop_thr = 50  # 1.5s
         exit_thr = 333  # 10s
         while True:
+            if interrupt_event and interrupt_event.is_set():
+                # 如果收到外部的打断信号，则停止录音，将当前录下的部分输出
+                break
+
             # stream.read()的参数是n_frames，不是n_bytes
             chunk = stream.read(self.chunk_length * self.rate // 1000)  # 除以1000，把ms变成s
 
@@ -298,12 +302,12 @@ class Player:
         stream.stop_stream()
         stream.close()
 
-    def play_unblock_ws(self, ws, wakeup_event=None):
+    def play_unblock_ws(self, ws, interrupt_event=None):
         r"""非阻塞地播放一个音频流，期间允许被打断。这里传进来的不是音频数据，而是一个WebSocket对象，它
         在一边加载数据的同时，这边也在持续播放音频
         Args:
             ws (websocket.WebSocketApp): 用来获取音频数据流的对象
-            wakeup_event (threading.Event()): 唤醒事件，用于打断音频播放
+            interrupt_event (threading.Event()): 中断事件，用于打断音频播放
         """
         self.ws = ws
         self.seek = 0  # 文件指针
@@ -320,6 +324,8 @@ class Player:
             time.sleep(0.1)
 
         while stream.is_active():
+            if interrupt_event and interrupt_event.is_set():
+                break
             time.sleep(0.1)
 
         # tx2开发板get_output_latency是0.256s

@@ -1,8 +1,12 @@
+# 这里存放了跟前端UI互动相关的一些函数
+import threading
 import time
 import json
 import gzip
 import time
 from base64 import b64encode
+
+import keyboard
 
 EXPIRE_TIME = 30
 
@@ -158,3 +162,36 @@ def client_service(sock, addr, main_process, ):
     for message in receivePackage(sock):
         rp(message)
     return
+
+
+def wait_keyboard(interrupt_event):
+    r"""Author: zhang.haojian
+    在多线程的场景下使用，监听键盘输入，在按下某个特定按键时通过Event向外部传达信息，由外部进行相应处理后
+    重置该Event
+    （结果发现监听键盘不是在后端搞的，是前端监听，监听到特定按键时发信号过来，所以这个函数就用不上了，尴尬）
+    Args:
+        interrupt_event (thread.Event): 用于记录是否按下打断键，可以打断播音或者录音
+    """
+    while True:
+        keyboard.wait("Esc")
+        interrupt_event.set()
+
+
+def test_wait_keyboard():
+    r"""wait_keyboard()函数的单元测试，在无按键输入时应当持续输出running，在按下Esc时应当输出
+    detected Esc!，而后继续输出running
+    """
+    interrupt_event = threading.Event()
+    s = threading.Thread(target=wait_keyboard, args=(interrupt_event,))
+    s.setDaemon(True)
+    s.start()
+    while True:
+        print("running")
+        time.sleep(0.1)
+        if interrupt_event.is_set():
+            print("detected Esc!")
+            interrupt_event.clear()
+
+
+if __name__ == "__main__":
+    test_wait_keyboard()
