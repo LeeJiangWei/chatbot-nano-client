@@ -120,7 +120,7 @@ class Recorder:
                                  input=True,
                                  frames_per_buffer=self.chunk_length)
 
-        vad = webrtcvad.Vad(mode=2)  # [0, 3]，0最容易给出是语音的判断，3最严格
+        vad = webrtcvad.Vad(mode=3)  # [0, 3]，0最容易给出是语音的判断，3最严格
         start_count = 0
         stop_count = 0
         exit_count = 0
@@ -326,6 +326,7 @@ class Player:
         # time.sleep(stream.get_output_latency())
         stream.stop_stream()
         stream.close()
+
 
 def test_player():
     player = Player(rate=16000)

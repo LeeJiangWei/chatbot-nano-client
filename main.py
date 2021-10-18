@@ -14,7 +14,8 @@ import tensorflow as tf
 
 from waker import Waker
 from audiohandler import Listener, Recorder, Player
-from utils.utils import bytes_to_wav_data, save_wav, get_answer, synonym_substitution
+from utils.utils import (bytes_to_wav_data, save_wav,
+    get_answer, synonym_substitution, remove_punctuation)
 from utils.asr_utils import ASRVoiceAI
 from utils.tts_utils import TTSBiaobei
 from utils.vision_utils import get_color_dict
@@ -23,6 +24,7 @@ from api import (str_to_wav_bin_unblock, str_to_wav_bin,
                  VoicePrint)
 from vision_perception import K4aCamera, NormalCamera
 from vision_perception.client_for_voice import InfoObtainer
+from vision_perception.client import get_visual_info
 
 ######################################################################################################
 # 1. socket (127.0.0.1, 5588)                                                                        #
@@ -49,9 +51,6 @@ SOCKET = ("0.0.0.0", 5588)  # 后端监听的端口
 HOST = "222.201.134.203"
 PORT = 17000
 PORT_INFO = 17001
-scene_cam = K4aCamera(HOST, PORT)
-emotion_cam = NormalCamera(0, "emotion", HOST, PORT)
-I = InfoObtainer(HOST, PORT_INFO)
 
 RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
 LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
@@ -124,6 +123,8 @@ class MainProcess(object):
         self.haddata = False  # 用于InfoObtainer的共享变量
         self.finish_stt_event = threading.Event()  # 用于流式STT中判断STT是否已经结束
 
+        self.visual_info = {}  # 用于后续接收语音信息，若不初始化会在get_visual_info时报错
+
         inter_proc = threading.Thread(target=self.interact, args=())
         inter_proc.setDaemon(True)  # 设置成守护进程，不然ctrl+C退出main()子进程还在，程序依然卡死
         inter_proc.start()
@@ -132,7 +133,11 @@ class MainProcess(object):
         vpr = VoicePrint()
         self.player = Player(rate=OUTPUT_RATE)
         waker = Waker(EXPECTED_WORD)
-        # recorder跟asr用于interact()
+
+        # 下面的对象都是用于interact()的
+        self.scene_cam = K4aCamera(HOST, PORT)
+        self.emotion_cam = NormalCamera(0, "emotion", HOST, PORT)
+        self.I = InfoObtainer(HOST, PORT_INFO)
         self.recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
         self.asr = ASRVoiceAI(INPUT_RATE)
         self.tts = TTSBiaobei()
@@ -150,31 +155,30 @@ class MainProcess(object):
                     waker.update(wav_data, sess, PLOT)
 
                 waker.reset()  # 重置waker的置信度等参数，使其下轮循环能重新进入内层while循环，等待下一次唤醒
-                scene_cam.send_single_image()
+                self.scene_cam.send_single_image()
                 self.haddata = False  # False要求重新向视觉模块获取视觉信息
                 listener.stop()
                 print("WAKEUP!")
 
-                recognized_str = "你好米娅"
-                # 将用户输入的语音转换成文字的结果群发给每个前端
-                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
-                # 如果STT（语音转文字）异常，通过置success=False向前端传达出错了的信号
-                # groupSendPackage(Package.voice_to_word_result("STT出错", success=False), self.clients)  # 具体错误可以具体写
-                # self.state = 0
-
                 # save_wav(b"".join(frames), "tmp.wav")  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
-
                 # wakeup
                 if not self.is_playing:
+                    recognized_str = "你好米娅"
+                    # 将用户输入的语音转换成文字的结果群发给每个前端
+                    groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+                    # 如果STT（语音转文字）异常，通过置success=False向前端传达出错了的信号
+                    # groupSendPackage(Package.voice_to_word_result("STT出错", success=False), self.clients)  # 具体错误可以具体写
+                    # self.state = 0
+
                     t1 = time.time()
                     spk_name = vpr.get_spk_name(wav_data)
                     print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
                     response_str = spk_name + "你好!"
 
                     # 针对用户情绪，在原有的欢迎语上添加对应的句子
-                    emotion_cam.send_single_image()
+                    self.emotion_cam.send_single_image()
                     data = {"require": "emotion"}
-                    result = I.obtain(data, False)
+                    result = self.I.obtain(data, False)
                     print("情绪识别结果：", result["emotion"])
                     welcome_word_suffix = {  # 分开心、不开心、平静三类
                         "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词 "],
@@ -199,6 +203,10 @@ class MainProcess(object):
                     response_str = "我在。"
                     wav = str_to_wav_bin(response_str)
                     self.player_exit_event.wait()
+                    # NOTE: 如果交互过程中听到唤醒词，在交互环节播音结束后会来到这里，此时本应重新监听唤醒词，
+                    # 结果却直接播放了“我在”，这是不合理的，因此要返回去重新监听
+                    # TODO: 这个唤醒打断真的太麻烦了！下一个版本改用按键打断，不要整这个了，乱七八糟
+                    continue
 
                 # 将智能系统回答的文本群发给每个前端
                 groupSendPackage(Package.response_word_result(response_str), self.clients)
@@ -221,6 +229,13 @@ class MainProcess(object):
                 self.is_playing = True
                 logger.info("Start recording...")
                 self.state = 1  # recording
+
+                # 在录音之前把图片发给视觉模块，录音结束差不多就能收到识别结果了（视觉模块处理时间2~3s）
+                # temporary thread -> tmpt
+                tmpt = threading.Thread(target=get_visual_info, args=(self,))
+                tmpt.setDaemon(True)
+                tmpt.start()
+
                 wav_list, no_sound = self.recorder.record_auto()
                 logger.info("Stop recording.")
                 if no_sound:
@@ -235,24 +250,19 @@ class MainProcess(object):
                 logger.info("Waiting server...")
                 self.state = 3  # computing
 
-                # scene_cam.send_single_image()
-                # self.haddata = False  # False要求重新向视觉模块获取视觉信息
-                # time.sleep(0.1)  # 给视觉模块时间重置信息
-                # TODO: I.obtain跟wav_bin_to_str是可以并行的，vodiceai转文字的时间比后面改成并行
-                data = {"require": "attribute"}
-                result = I.obtain(data, self.haddata)
-                self.haddata = True  # 获得过一次视觉信息之后，在下次重新唤醒之前就不需要重复获取了
-                
+                while not self.visual_info:  # 等待直到visual_info非空，也即收到视觉模块的回复
+                    time.sleep(0.1)
+
                 with open("visual_info.txt", "w") as fp:
-                    fp.write("时间戳:" + result["timestamp"] + "\n")
-                    for item in result["attribute"]:
+                    fp.write("时间戳:" + self.visual_info["timestamp"] + "\n")
+                    for item in self.visual_info["attribute"]:
                         fp.write(str(item) + "\n")
 
-                img = Image.open(scene_cam.savepath).convert("RGB")
+                img = Image.open(self.scene_cam.savepath).convert("RGB")
                 drawer = ImageDraw.ImageDraw(img)
                 fontsize = 13
                 font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
-                for attr in result["attribute"]:
+                for attr in self.visual_info["attribute"]:
                     # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
                     # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
                     drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
@@ -270,7 +280,7 @@ class MainProcess(object):
                 recognized_str = synonym_substitution(recognized_str)
                 print("近义词替换后：", recognized_str)
 
-                if len(recognized_str) == 0:
+                if len(remove_punctuation(recognized_str)) <= 1:  # 去掉一些偶然的噪声被识别为“嗯”等单字导致误判有人说话的情况
                     recognized_str = "(无人声)"
                 t1 = time.time()
                 print("recognition:", t1 - t0)
@@ -280,7 +290,7 @@ class MainProcess(object):
                 groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
 
                 start = time.time()
-                response_word, self.sentences = get_answer(recognized_str, result["attribute"])
+                response_word, self.sentences = get_answer(recognized_str, self.visual_info["attribute"])
                 print("rasa:", time.time() - start)
 
                 # TODO: 把退出主程序的功能做好，现在没有实现预期功能

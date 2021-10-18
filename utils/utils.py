@@ -12,7 +12,9 @@ SYNONYM_TABLE = {
     "水浒": "水壶",
     "台版": "白板",
     "黑板选": "黑板刷",
+    "微波楼": "微波炉",
     "一只": "椅子",
+    "一直": "椅子",
     "停止": "瓶子",
 }
 
@@ -109,6 +111,7 @@ EN_ZH_MAPPING = {
     "projector": "投影仪",
     "tap": "水龙头",
     "whiteboard": "白板",
+    "ground": "地",
 }
 
 COLOR_MAPPING = {
@@ -357,6 +360,13 @@ def get_response(wav_data: bytes, visual_info) -> [str, [str], [bytes]]:
 def synonym_substitution(recognized_str):
     for k, v in SYNONYM_TABLE.items():
         recognized_str = recognized_str.replace(k, v)
+    return recognized_str
+
+
+def remove_punctuation(recognized_str):
+    punctuations = "；|？|。|,|！|!"
+    for k in punctuations:
+        recognized_str = recognized_str.replace(k, "")
     return recognized_str
 
 
