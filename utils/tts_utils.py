@@ -98,6 +98,7 @@ class TTSBiaobei:
         # 把整个websocket对象都给返回出去了，后面拿着它去访问wav_data
         self.reset()
         self.ws.text = text
+        # run_forever()并没有新开线程，它是阻塞式地执行一系列on函数，直到连接关闭，所以我们要在外面自己开多线程
         self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})  # 开启长连接，每run_forever一次就是执行了从on_open到on_close的整一套流程
         return self.ws
 

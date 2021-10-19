@@ -280,14 +280,17 @@ class MainProcess(object):
 
             self.state = 2  # robot speaking
             groupSendPackage(Package.response_word_result(response_word), self.clients)
+
+            self.player.t1 = time.time()
+            tts_proc = threading.Thread(target=self.tts.start_tts, args=(response_word,))
+            tts_proc.setDaemon(True)
+            tts_proc.start()
+            self.interrupt_event.clear()
+            self.player.play_unblock_ws(self.tts.ws, self.interrupt_event)
+            logger.info(f"音频准备时间：{self.player.start_time:.2f}s")
+
             if query_text:  # 如果是直接给出文本，得到一次答复之后就退出，因为重复问同一句话没有意义
                 return response_word
-
-            start = time.time()
-            ws = self.tts.start_tts(response_word)
-            self.interrupt_event.clear()
-            self.player.play_unblock_ws(ws, self.interrupt_event)
-            logger.info(f"TTS & play: {time.time() - start:.2f}s")
 
         self.state = 0  # waiting
 

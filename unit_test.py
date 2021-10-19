@@ -201,10 +201,11 @@ def test_player_ws(input_list=[]):
 
     for response_word in input_list:
         start = time.time()
-        ws = tts.start_tts(response_word)
-
-        print(f"输出: {response_word}:", end="")
-        player.play_unblock_ws(ws)
+        tts_proc = threading.Thread(target=tts.start_tts, args=(response_word,))
+        tts_proc.setDaemon(True)
+        tts_proc.start()
+        print(f"输出: {response_word}")
+        player.play_unblock_ws(tts.ws)
         print(f"  用时 {time.time() - start:.2f}s")
 
     print("Player模块和TTS模块流式输出测试结束。")
@@ -371,8 +372,14 @@ def test_interact():
         data = json.load(fp)
 
     results = []
+    focused_keys = ["chat"]
+    ignore_keys = ["ignore"]
 
     for key, query_texts in data.items():
+        # if key not in focused_keys:
+        #     continue
+        # if key in ignore_keys:
+        #     continue
         print(f"测试rasa对{key}类问题的回答..")
         for query_text in query_texts:
             answer = main_process.interact(query_text)

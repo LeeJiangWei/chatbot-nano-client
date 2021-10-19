@@ -234,6 +234,8 @@ class Player:
         self.seek = 0
 
         self.play_frames = 0  # 仅用于配合tqdm_iterator使用，表示stream的while播放循环中已经播放了几帧数据
+        self.t1 = -1
+        self.start_time = -1
 
     def __del__(self):
         self.audio.terminate()
@@ -291,9 +293,17 @@ class Player:
     def _callback_ws(self, in_data, frame_count, time_info, status):
         # TODO: 看看有没有办法让TTS模块一次收到刚好一个CHUNK的数据，这样就不用做bytes的相加操作，直接在list里取，
         # 这样才快而且省内存
+        # 因为网络原因导致现在没有数据可播（实践中出现且仅出现在最开头），但还有一些数据在路上
+        if self.seek >= len(self.ws.wav_data) and not self.ws.finish_tts:
+            return b"\x00" * self.chunk_bytes, pyaudio.paContinue
+        # 流式TTS播音没办法直接获取从准备播音到开始播音（也就是收到第一帧数）据花费的时间，只好出此下策
+        if self.start_time == -1:
+            self.start_time = time.time() - self.t1  # t1是在外部启动TTS的时候赋值的，没在类内赋值
+
         start = self.seek
         self.play_frames += 1
         self.seek += int(frame_count * self.channels * pyaudio.get_sample_size(self.pformat))
+
         if self.seek < len(self.ws.wav_data):
             # paContinue表示后面还有数据
             return self.ws.wav_data[start:self.seek], pyaudio.paContinue
@@ -305,8 +315,6 @@ class Player:
             # 完整且状态为paContinue的块才会被播放，这里文档是说最后一个块用paComplete，但是那样这个块播放不了，
             # 我们还是要用paContinue并把这个块补全到完整长度
             return ret, pyaudio.paContinue
-        elif not self.ws.finish_tts:  # 因为网络原因导致现在没有数据，但还有一些数据在路上
-            return b"\x00" * self.chunk_bytes, pyaudio.paContinue
         else:
             # paComplete表示这是音频数据的最后一个块block
             return b"", pyaudio.paComplete
@@ -367,6 +375,7 @@ class Player:
                                  output=True,
                                  frames_per_buffer=self.chunk_length,
                                  stream_callback=self._callback_ws)
+        self.start_time = -1
         stream.start_stream()
 
         while len(self.ws.wav_data) <= 0:  # 等待TTS服务器给到第一个数据包
@@ -378,6 +387,7 @@ class Player:
             time.sleep(0.1)
 
         # tx2开发板get_output_latency是0.256s
+        # 在目前版本中我们把最后一个块也给了paContinue，它一定能播放完，不需要这个sleep也能正常工作
         # time.sleep(stream.get_output_latency())
         stream.stop_stream()
         stream.close()
