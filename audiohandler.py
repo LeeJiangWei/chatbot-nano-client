@@ -7,40 +7,47 @@ import pyaudio
 from tqdm import tqdm
 import webrtcvad
 
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+INPUT_RATE = 16000
+OUTPUT_RATE = 8000
+LISTEN_SECONDS = 1
+
 PLAYER_CHUNK_LENGTH = 1024
-RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
-LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
+RECORDER_CHUNK_LENGTH = 480
+LISTENER_CHUNK_LENGTH = 1000
 
 from utils.tts_utils import TTSBiaobei
 
 
 class Listener:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=LISTENER_CHUNK_LENGTH, listen_seconds=1):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=1000, listen_seconds=1):
         # should match KWS module
         self.pformat = pformat
         self.channels = channels
         self.rate = rate
-        self.chunk_length = chunk_length
+        self.chunk_length = chunk_length  # 取整方便buffer切块
         self.listen_seconds = listen_seconds
 
         self.audio = pyaudio.PyAudio()
-        self.buffer = [b"\x01" * chunk_length * pyaudio.get_sample_size(pformat) * self.channels] * int(
-            rate / chunk_length) * listen_seconds * 2
+        self.refresh_buffer()
 
     def __del__(self):
         self.audio.terminate()
 
     def __callback(self, in_data, frame_count, time_info, status_flags):
+        # 每次回调函数都对buffer进行一次出列一次入列，使队列中始终包含最近2 * listen_seconds秒的音频数据
         self.buffer.pop(0)
         self.buffer.append(in_data)
         return None, pyaudio.paContinue
 
-    def listen(self):
-        # 维护一个缓存队列，每个元素是一个块chunk的音频数据，一共有n个，加起来刚好是listen_seconds秒的音频数据
-        # 每次回调函数都进行一次出列一次入列，队列中始终包含最近listen_seconds秒的音频数据
-        self.buffer = [b"\x01" * self.chunk_length * pyaudio.get_sample_size(self.pformat) * self.channels] * int(
+    def refresh_buffer(self):
+        # buffer是一个缓存队列，每个元素是一个块chunk的音频数据，一共有2n个，加起来刚好是2 * listen_seconds秒的音频数据，多出的一半作为冗余
+        self.buffer = [b"\x00" * self.chunk_length * pyaudio.get_sample_size(self.pformat) * self.channels] * int(
             self.rate / self.chunk_length) * self.listen_seconds * 2
 
+    def listen(self):
+        self.refresh_buffer()
         self.stream = self.audio.open(format=self.pformat,
                                       channels=self.channels,
                                       rate=self.rate,

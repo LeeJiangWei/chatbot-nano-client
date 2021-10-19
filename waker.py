@@ -1,13 +1,31 @@
+import os
+import sys
+import logging
+import time
+import wave
 from matplotlib import cm
 from matplotlib import pyplot as plt
 
+import pyaudio
 import numpy as np
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 把tensorflow的日志等级降低，不然输出一堆乱七八糟的东西
 import tensorflow as tf
 
+from audiohandler import Listener, Player
+from utils.utils import bytes_to_wav_data, save_wav
 
 # Tensorboard visualize command:
 # python -m tensorflow.python.tools.import_pb_to_tensorboard --model_dir="./models/CRNN/CRNN_L.pb"  --log_dir="./tmp"
 # tensorboard --logdir=./tmp
+
+LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 16000
+LISTEN_SECONDS = 1
+EXPECTED_WORD = "miya"
+
+PLOT = False
 
 def load_labels(filename):
     """Read in labels, one label per line."""
@@ -129,27 +147,6 @@ class Waker:
 
 def test_waker():
     r"""对Waker的功能进行基本测试，需要借助Listener"""
-    import os
-    import sys
-    import logging
-    import time
-
-    import pyaudio
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 把tensorflow的日志等级降低，不然输出一堆乱七八糟的东西
-    import tensorflow as tf
-
-    from audiohandler import Listener
-    from utils.utils import bytes_to_wav_data, save_wav
-
-    LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
-    FORMAT = pyaudio.paInt16
-    CHANNELS = 1
-    RATE = 16000
-    LISTEN_SECONDS = 1
-    EXPECTED_WORD = "miya"
-
-    PLOT = False
-
     logger = logging.getLogger(__name__)
     logger.setLevel(level=logging.INFO)
     formatter = logging.Formatter(fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

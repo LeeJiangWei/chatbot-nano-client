@@ -118,9 +118,11 @@ class MainProcess(object):
         r"""
         时序图：─│┌┐└┘├┴┬┤┼╵
                                                ┌─没检测到唤醒词──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-        初始阶段：listener.listen()录制用户语音 ─┴─检测到唤醒词── 发送"你好米娅"文本到前端 ─── 进行声纹识别 ─── 发送欢迎文本到前端 ─── 播放欢迎语 ─── wakeup_event.set() ─── 继续listener.listen()
-                                                                                    │ 主进程可以在record_auto()结束时、播放语音前或者播放语音时通过说唤醒词退出互动阶段
-        互动阶段：wakeup_event.set() ─── 进入interact_process循环 ─── recorder.record_auto()录制用户语音 ─── I.obtain()向视觉模块获取信息 ─── wav_bin_to_str()语音转文字 ─── get_answer()获取响应文本 ─── 边转音频边播放 ─── wakeup_event.clear()
+        初始阶段：listener.listen()录制用户语音 ─┴─检测到唤醒词── 发送"你好米娅"文本到前端 ─── 进行声纹识别 ─── 发送欢迎文本到前端 ─── 播放欢迎语 ─── 互动阶段 ───────────── 继续listener.listen()
+                                                                                                                                              └─主进程可以在录制用户语音时、播放回答─┘
+                                                                                                                                                的音频时通过按下Esc键退出互动阶段
+        互动阶段：recorder.record_auto()录制用户语音 ───┬───┬ 检测到有人说话 ─── asr.trans()流式语音转文字 ─── 发送识别出的文本到前端 ─── get_answer()获取响应文本 ─── tts.start_tts()文字转语音, 流式加载音频  ────┬─继续recorder.record_auto()录制用户语音
+                  └─同时get_visual_info()获取视觉信息 ─┘   └ 没检测到有人说话 ─── 退出互动阶段                                                                       └─player.play_unblock_ws()非阻塞式播放音频─┘
         """
         self.finish_stt_event = threading.Event()  # 用于流式STT中判断STT是否已经结束
         self.interrupt_event = threading.Event()  # 用于判断是否收到键盘的打断信号
@@ -177,9 +179,9 @@ class MainProcess(object):
                 result = self.I.obtain(data, False)
                 print("情绪识别结果：", result["emotion"])
                 welcome_word_suffix = {  # 分开心、不开心、平静三类
-                    "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词 "],
+                    "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词", "嘤嘤嘤，不要这么冷漠嘛", "戳戳，笑一个"],
                     "happy": ["你看起来心情不错", "你看起来很开心，我猜是捡到钱了", "你笑起来真好看", "你的笑容让我沉醉"],
-                    "unhappy": ["你看起来似乎不太开心", "你的心情有些低落呢，给你讲个笑话好不好", "别生气啦，来杯咖啡压压惊", "压力大就要学会放松心情"]
+                    "unhappy": ["你看起来似乎不太开心", "你的心情有些低落呢，给你讲个笑话好不好", "别生气啦，来杯咖啡压压惊", "压力大就要学会放松心情", "怎么一副苦瓜脸，笑一个嘛", "有什么不开心的事情吗"]
                     }
                 if result["emotion"] in ["neutral"]:  # calm
                     response_str += random.choice(welcome_word_suffix["neutral"])
