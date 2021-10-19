@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # 改编自voiceai的transcribe_websocket.py
+import time
 import json
 import websocket
 import _thread
@@ -13,7 +14,7 @@ t1 = datetime.now()
 # 我也不知道为啥要用这种写法，拿到的example代码就是这样写的。
 # 然后调用它们的时候，ws这个变量在这些函数的外部，所以在函数内部可以直接调用，虽然看起来没有定义，但是实际运行起来是
 # 不会报错的
-def on_message_test(self, message):
+def on_message_stream(self, message):
     r"""
     Args:
         message (bytes): utf-8 data received from the server
@@ -62,6 +63,7 @@ def on_close(self, status_code, close_msg):
 
 
 def run(ws):
+    r"""发送整句话，连续把数据发完，最后发送一个结束符"""
     block = 16000  # 一次截取16000字节
     start, seek = 0, block
 
@@ -74,6 +76,25 @@ def run(ws):
     # 最后发送一个end of stream控制信令，通知Websocket Server音频流传输已经EOF，而后Server会主动断开连接
     endOfStreamEvent = { "endOfStream": True }
     ws.send(json.dumps(endOfStreamEvent))
+
+
+def run_stream(ws):
+    r"""有数据就一直发送，直到收到停止录制的信号时发送一个结束符，然后停下"""
+    # 刚好有个buffer成员，直接一块一块发，舒服
+    idx = 0
+    while True:
+        while idx < len(ws.buffer):
+            # 待发送序号小于buffer长度时，持续发送数据
+            audio = ws.buffer[idx]
+            ws.send(audio, websocket.ABNF.OPCODE_BINARY)
+            idx += 1
+
+        if ws.finish_record_event.is_set():
+            # 待发送序号大于等于buffer长度且音频录制已结束时，发送结束符，结束发送过程
+            endOfStreamEvent = { "endOfStream": True }
+            ws.send(json.dumps(endOfStreamEvent))
+            break
+        time.sleep(0.1)  # 没有数据可发但尚处于录制状态中，那就等一等
 
 
 def on_open(self):
@@ -97,7 +118,7 @@ def on_open(self):
         # 如果为False，则每句转写文本将会一直被Server缓存累积着，直到Client发送一个End Of Stream控制信令
         # 消息通知"语音数据流传输已经EOF，不会再有新数据发送"，此时Server会将累积的转写文本一次性推送给
         # Client，同时Server不再继续接收新的语音数据流！
-        "liveRecordingScene": False,
+        "liveRecordingScene": False,  # 若已知发送的是一整句话，则置为False
 
         ###### 可选的参数 ######
         # 【注：机器⼈项目不需要打开这个功能】是否在转写文本中将口语转换为书面语
@@ -109,6 +130,42 @@ def on_open(self):
     self.send(json.dumps(config))  # 建立连接之后先发送配置，然后才能开始发语音
 
     _thread.start_new_thread(run, (self,))  # 启动线程执行run()函数发送数据
+
+
+def on_open_stream(self):
+
+    config = {
+        ###### 必须的参数 ######
+        # 即将要发送的语音数据的采样率，数值为8000、16000、44100、48000等；
+        # 注意：这个数值必须跟语音实际的采样率一致。
+        "sampleRate": self.rate,
+        # 是否在转写文本中自动加标点
+        "addPunctuation": True,
+        # 【注：机器⼈项目不需要打开这个功能】是否需要返回转写文本中每个标点的时间信息
+        "needTimeinfo": False,
+        # 是否在转写文本中自动将数字转换为阿拉伯数字
+        "convertNumbers": True,
+        # 静音检测时⻓，单位为10毫秒，大小为[50, 500]
+        "pauseTime": 150,
+
+        # 是否为Conference类似的实时转写场景，例如，实时连续转写的会议场景应用，需将这个字段设置为True。
+        # 如果为True，则每当有（稳定的或不稳定的）转写文本产生，该转写文本将会马上被Server推送给Client；
+        # 如果为False，则每句转写文本将会一直被Server缓存累积着，直到Client发送一个End Of Stream控制信令
+        # 消息通知"语音数据流传输已经EOF，不会再有新数据发送"，此时Server会将累积的转写文本一次性推送给
+        # Client，同时Server不再继续接收新的语音数据流！
+        "liveRecordingScene": False,  # 若已知发送的是一整句话，则置为False
+        # "liveRecordingScene": True,  # （待确认）若要流式发送数据，则置为True
+
+        ###### 可选的参数 ######
+        # 【注：机器⼈项目不需要打开这个功能】是否在转写文本中将口语转换为书面语
+        "oral2written": False,
+        # 如果没有协商`modelName`这个参数，则默认是让服务器选择使用`通用`模型。
+        "modelName": "susie-lvcsr4-general-cn-16k"
+    }
+
+    self.send(json.dumps(config))  # 建立连接之后先发送配置，然后才能开始发语音
+
+    _thread.start_new_thread(run_stream, (self,))  # 启动线程执行run()函数发送数据
 
 
 def on_open_test(self):
@@ -149,7 +206,7 @@ def test_simple():
 
         ws = websocket.WebSocketApp("wss://125.217.235.84:8443/transcribe",
             on_open=on_open_test,  # 连接后自动调用发送函数
-            on_message=on_message_test,  # 接收消息调用
+            on_message=on_message_stream,  # 接收消息调用
             on_error=on_error,
             on_close=on_close
         )
@@ -174,18 +231,49 @@ class ASRVoiceAI:
         self.reset()
 
     def trans(self, wav_data):
+        r"""对一整句话进行翻译，翻译前事先知道只有一句话，最后一定是句子结束符"""
         self.reset()
+        # 强行切换on_open函数
+        self.ws.on_open = on_open
+        self.ws.on_message = on_message
+
         self.ws.wav_data = wav_data
         self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})  # 开启长连接，每run_forever一次就是执行了从on_open到on_close的整一套流程
+
+        return self.ws.asr_result
+
+    def trans_stream(self, buffer, finish_record_event):
+        r"""Author: zhang.haojian
+        流式翻译，适合翻译包含了多个句子导致无法在翻译前完成断句的长输入
+        在流式翻译过程中，recorder会不断往buffer添加音频数据，ASR模块负责读取翻译，根据Event判断音频录制是否结束
+        Args:
+            buffer (list): recorder类里面的buffer，一个元素就是一个chunk
+            finish_record_event (threading.Event): 结束录制的事件，由Recorder控制
+        """
+        self.reset()
+        # 强行切换on系列函数
+        self.ws.on_open = on_open_stream
+        self.ws.on_message = on_message_stream
+
+        self.ws.buffer = buffer
+        self.ws.finish_record_event = finish_record_event
+        self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})  # 开启长连接，每run_forever一次就是执行了从on_open到on_close的整一套流程
+
         return self.ws.asr_result
 
     def reset(self):
         self.ws.wav_data = b""  # 准备进行ASR的音频数据
         self.ws.asr_result = ""  # ASR结果
+        self.ws.buffer = []  # 用于流式ASR的缓冲区
 
-if __name__ == "__main__":
-    # test_simple()
+
+def test():
     with open("../welcome.wav", "rb") as f:  # welcome.wav是voiceai录的采样率8000的音频
         audio = f.read()
     asr = ASRVoiceAI(8000)
     print(asr.trans(audio))
+
+
+if __name__ == "__main__":
+    # 跟Recorder配合使用的例子放在unit_test.py里头了
+    test_simple()

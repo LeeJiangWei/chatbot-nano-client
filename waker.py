@@ -179,5 +179,31 @@ def test_waker():
             time.sleep(1.5)
 
 
+def test_waker_using_wav():
+    r"""使用事先录制好的wav文件让Waker进行判断，预期原本能唤醒的句子，录下来之后喂数据给Waker也应当能唤醒
+    注意模型只支持16K采样率1s长音频，其他格式能放进去，但是不能保证效果
+    """
+    waker = Waker("miya")
+    # 借助Player播放一下片段
+    player = Player(rate=RATE)
+
+    # 块长度选0.2s，也就是步长0.2s，宽度为1s的滑动窗口
+    chunk_length = int(0.2 * RATE * CHANNELS * 2) # 单声道x1 Int16x2
+    
+    with tf.compat.v1.Session() as sess:
+        for i in range(1, 6):
+            with wave.open(f"test{i}.wav", "rb") as wf:
+                wav_data = wf.readframes(wf.getnframes())
+            seek = 0
+            while seek + RATE <= len(wav_data):
+                data = wav_data[seek: seek + RATE]
+                player.play_unblock(data)
+                data = bytes_to_wav_data(data, FORMAT, CHANNELS, RATE)
+                waker.update(data, sess)
+                print(waker.smooth_pred, waker.confidence, waker.waked_up())
+                seek += chunk_length
+
+
 if __name__ == "__main__":
-    test_waker()
+    # test_waker()
+    test_waker_using_wav()

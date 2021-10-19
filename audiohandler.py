@@ -56,20 +56,40 @@ class Listener:
                                       stream_callback=self.__callback)
         self.stream.start_stream()
 
+    def load_wav_data(self, wav_data):
+        r"""Author: zhang.haojian
+        该函数仅用于调试，可以直接把TTS输出的音频数据放进来，不需要每次都用人声去测，一次可以测很多语句，调试速度更快
+        Args:
+            wav_data (bytes): 音频数据，wav/pcm皆可
+        """
+        self.wav_data = wav_data
+        self.seek = 0
+
+    def step_a_chunk(self):
+        r"""VAD"""
+        start = self.seek
+        self.seek += int(self.chunk_length * self.channels * pyaudio.get_sample_size(self.pformat))
+        new_chunk = self.wav_data[start: self.seek]
+
+        # in_data =
+        self.buffer.pop(0)
+        self.buffer.append(new_chunk)
+        return len(new_chunk)
+
     def stop(self):
         self.stream.stop_stream()
         self.stream.close()
 
 
 class Recorder:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=RECORDER_CHUNK_LENGTH):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=16000, chunk_length=480):
         r"""
         Args:
             pformat: 音频样本点的数据类型
             channels (int): 声道数
             rate (int): 采样率，Hz
-            chunk_length (int): 一个块对应的时间长度(ms)
-        块长度取30ms是因为vad只支持帧长10ms，20ms和30ms
+            chunk_length (int): 一个块包含的帧frame数
+        块长度取480是因为vad只支持帧长10ms，20ms和30ms，采样率16000的情况下30ms对应480帧
         """
         # should match ASR module
         self.pformat = pformat
@@ -83,22 +103,29 @@ class Recorder:
     def __del__(self):
         self.audio.terminate()
 
-    def record(self, record_seconds=3):
-        r"""根据给定的时间长度，录制一段音频
+    def record(self, record_seconds=3, finish_record_event=None):
+        r"""根据给定的时间长度，录制一段音频，支持流式录制翻译
+        finish_record_event不传参即为整段录制后翻译，传Event即可支持流式录制翻译
         Args:
             record_seconds (int): record time (second)
+            finish_record_event (threading.Event): 结束录制事件，用来向外部传达信息
         """
         self.buffer = []
+        if finish_record_event:
+            finish_record_event.clear()  # 先复位事件
+
         stream = self.audio.open(format=self.pformat,
                                  channels=self.channels,
                                  rate=self.rate,
-                                 input=True,
-                                 frames_per_buffer=self.chunk_length)
+                                 input=True)
 
-        for _ in tqdm(range(record_seconds)):
-            chunk = stream.read(self.rate)
+        chunk_time = 0.1  # 0.1s
+        for _ in tqdm(range(int(record_seconds / chunk_time)), desc="Recording"):
+            chunk = stream.read(int(self.rate * chunk_time))
             self.buffer.append(chunk)
 
+        if finish_record_event:
+            finish_record_event.set()  # 向外部传达录音已结束的信息
         stream.stop_stream()
         stream.close()
 
@@ -140,7 +167,7 @@ class Recorder:
                 break
 
             # stream.read()的参数是n_frames，不是n_bytes
-            chunk = stream.read(self.chunk_length * self.rate // 1000)  # 除以1000，把ms变成s
+            chunk = stream.read(self.chunk_length)
 
             # data = b''.join(self.buffer[-buffer_window_len:])
             # rms = audioop.rms(data, width)
@@ -178,7 +205,7 @@ class Recorder:
 
 
 class Player:
-    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=8000, chunk_length=PLAYER_CHUNK_LENGTH):
+    def __init__(self, pformat=pyaudio.paInt16, channels=1, rate=8000, chunk_length=1024):
         # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
         self.pformat = pformat
         self.channels = channels
@@ -267,7 +294,7 @@ class Player:
             return b"\x00" * self.chunk_bytes, pyaudio.paContinue
         else:
             # paComplete表示这是音频数据的最后一个块block
-            return b"", pyaudio.paComplete            
+            return b"", pyaudio.paComplete
 
     def play_unblock(self, wav_data, wakeup_event=None):
         r"""非阻塞地播放一个音频流，期间允许被打断
@@ -342,7 +369,7 @@ class Player:
 
 
 def test_player():
-    player = Player(rate=16000)
+    player = Player(rate=INPUT_RATE)
     with wave.open("./tmp2.wav", "rb") as wf:
         wav_data = wf.readframes(wf.getnframes())
     event = threading.Event()
@@ -351,8 +378,8 @@ def test_player():
 
 def test_record_auto():
     # record_auto only support mono channel
-    recorder = Recorder(rate=16000, channels=1)
-    player = Player(rate=16000, channels=1)
+    recorder = Recorder(rate=INPUT_RATE, channels=1)
+    player = Player(rate=INPUT_RATE, channels=1)
     print("Recording...")
     buffer, _ = recorder.record_auto()
     time.sleep(0.5)  # 避免听说混淆
@@ -362,30 +389,55 @@ def test_record_auto():
 
 
 def test_record():
-    channels = 1
-    recorder = Recorder(rate=16000, channels=channels)
-    player = Player(rate=16000, channels=channels)
-    print("Recording...")
-    buffer = recorder.record()
-    time.sleep(0.5)  # 避免听说混淆
+    recorder = Recorder(rate=INPUT_RATE)
+
+    # 测试阻塞式录制
+    print("Unblocking recording:")
+    buffer = recorder.record(5)
+    print("Finish recording.")
+
+    player = Player(rate=INPUT_RATE)
     wav_data = b"".join(buffer)
-    print("Playing...")
     player.play_unblock(wav_data)
-    from utils.utils import save_wav
-    print(len(wav_data))
-    save_wav(wav_data, "tmp2.wav", channels=channels, rate=16000)
+
+    # 测试非阻塞式录制
+    print("Blocking recording:")
+    finish_record_event = threading.Event()
+    s = threading.Thread(target=recorder.record,
+                         kwargs=({
+                             "record_seconds": 5,  # 录制5s
+                             "finish_record_event": finish_record_event
+                         }))
+    s.setDaemon(True)
+    s.start()
+    while not finish_record_event.is_set():
+        time.sleep(0.2)
+    print("Finish recording.")
+
+    player = Player(rate=INPUT_RATE)
+    wav_data = b"".join(recorder.buffer)
+    player.play_unblock(wav_data)
 
 
 def test_play_unblock_ws():
     text = "妈妈给六岁的儿子出算术题做。“你一共有六个苹果，爸爸拿走两个，妈妈拿走四个，你还剩几个苹果？”儿子听后很激动说：“我真的是亲生的吗？”"
     tts = TTSBiaobei()
-    player = Player(rate=8000)
+    player = Player(rate=OUTPUT_RATE)
     ws = tts.start_tts(text)
     player.play_unblock_ws(ws)
 
 
+def test_listener():
+    listener = Listener(FORMAT, CHANNELS, INPUT_RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
+    listener.listen()
+    time.sleep(20)
+    # frames = listener.buffer[-int(INPUT_RATE / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):]
+    listener.stop()
+
+
 if __name__ == "__main__":
-    # test_record()
+    test_record()
     # test_record_auto()
     # test_player()
-    test_play_unblock_ws()
+    # test_play_unblock_ws()
+    # test_listener()

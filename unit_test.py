@@ -59,8 +59,8 @@ def test_tts_and_player():
     print("TTS模块功能测试开始...")
     # 每个元素就是一个测试用例
     input_list = [
+        "你好米娅",
         # "今天天气怎么样",
-        # "你好米娅",
         # "杯子在哪里",
         # "咖啡机在哪里",
         # "盆栽在哪里",
@@ -77,7 +77,7 @@ def test_tts_and_player():
 
     t1 = time.time()
     for s in input_list:
-        wav_data = str_to_wav_bin(s)
+        wav_data = str_to_wav_bin(s, speed=0.0)
         player.play_unblock(wav_data)
         print(f"{s}  用时{time.time() - t1:.2f}s")
         t1 = time.time()
@@ -208,8 +208,116 @@ def test_player_ws(input_list=[]):
     print("Player模块和TTS模块流式输出测试结束。")
 
 
+def test_listener_with_tts_and_asr():
+    r"""借助TTS和ASR模块测试listener的切片是否正确以及唤醒模型的输出的某些功能
+    用tts模块生成语音，经过listener截取后，观察listener每个用来VAD的片段经过asr后输出结果是否符合预期，
+    同时观察
+    """
+    print("Listener模块切片正确性检验开始...")
+
+    input_list = [
+        "今天天气怎么样",
+        "你好米娅",
+        "杯子在哪里",
+        "咖啡机在哪里",
+        "盆栽在哪里",
+        "广州今天多云，气温16到24度~",
+        "广州今天多云，气温16到24度。",
+    ]
+    
+    # 因为这里用的是TTS的输出作为输入，所以输入采样率应该等于TTS输出的采样率
+    input_rate = OUTPUT_RATE
+    chunk_length = 30 * input_rate // 1000
+    listener = Listener(FORMAT, CHANNELS, input_rate, chunk_length, LISTEN_SECONDS)
+    asr = ASRVoiceAI(OUTPUT_RATE)
+    
+    for s in input_list:
+        t1 = time.time()
+        wav_data = str_to_wav_bin(s)
+        listener.load_wav_data(wav_data)
+        while listener.step_a_chunk():
+            sliced_data = b"".join(listener.buffer[-int(input_rate / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):])
+            result = asr.trans(sliced_data)
+            print(f"{s} {result} 用时{time.time() - t1:.2f}s")
+    print("Listener模块切片正确性检验结束。")
+
+
+def test_listener_and_waker():
+    r"""借助TTS模块，测试经Listener处理后的语音片段在Waker里的识别效果，顺便用Player模块
+    目前还没有办法通过"你好米娅"的切片语音让Waker给出被唤醒的判断
+    """
+    print("Waker功能测试开始...")
+
+    input_list = [
+        "你好米娅",
+        # "今天天气怎么样",
+        # "杯子在哪里",
+        # "咖啡机在哪里",
+        # "盆栽在哪里",
+        # "广州今天多云，气温16到24度~",
+        # "广州今天多云，气温16到24度。",
+    ]
+    
+    # 因为这里用的是TTS的输出作为输入，所以输入采样率应该等于TTS输出的采样率
+    input_rate = OUTPUT_RATE
+    listener = Listener(FORMAT, CHANNELS, input_rate, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
+    asr = ASRVoiceAI(OUTPUT_RATE)
+    waker = Waker(EXPECTED_WORD)
+    player = Player(rate=input_rate)
+
+    for speed in range(0, 10):
+        with tf.compat.v1.Session() as sess:
+            for s in input_list:
+                t1 = time.time()
+                wav_data = str_to_wav_bin(s, speed=float(speed))  # 最低速度
+                listener.load_wav_data(wav_data)
+                while listener.step_a_chunk():
+                    sliced_data = b"".join(listener.buffer[-int(input_rate / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):])
+                    print(len(sliced_data))
+                    result = asr.trans(sliced_data)
+                    sliced_data = bytes_to_wav_data(sliced_data, FORMAT, CHANNELS, input_rate)
+                    player.play(sliced_data)
+                    waker.update(sliced_data, sess)
+                    print(f"{s} {result} {waker.smooth_pred} {waker.confidence:.2f} {waker.waked_up()}  用时{time.time() - t1:.2f}s")
+    print("Waker功能测试结束。")
+
+
+def test_recorder_and_asr():
+    r"""结合Recorder模块测试阻塞式录制翻译和流式录制翻译，流式录制翻译预期应在录音结束后很短时间内（比如0.5s）就能给出翻译结果，且
+    该时间不受录音时间长度影响
+    """
+    print("Recorder模块与ASR模块联合测试开始...")
+    recorder = Recorder(rate=INPUT_RATE)
+    asr = ASRVoiceAI(INPUT_RATE)
+
+    record_seconds = 5  # 录制5s
+
+    # 阻塞式录制+流式翻译=阻塞式录制翻译
+    buffer = recorder.record_stream(record_seconds)
+    t1 = time.time()
+    result = asr.trans(b"".join(buffer))
+    print(f"{result}  非流式翻译用时{time.time() - t1:.2f}s")
+
+    # 流式录制+流式翻译=流式录制翻译
+    finish_record_event = threading.Event()
+    record_proc = threading.Thread(target=recorder.record_stream,
+                         kwargs=({
+                             "record_seconds": record_seconds,
+                             "finish_record_event": finish_record_event
+                         }))
+    record_proc.setDaemon(True)
+    record_proc.start()
+
+    t1 = time.time()
+    result = asr.trans_stream(recorder.buffer, finish_record_event)
+    print(f"{result}  录制用时{record_seconds}s, 流式翻译用时{time.time() - t1:.2f}s")
+    print("Recorder模块与ASR模块联合测试结束。")
+
 if __name__ == "__main__":
     # test_tts_and_player()
     # test_tts_and_asr()
     # test_cam_and_qas()
-    test_player_ws()
+    # test_player_ws()
+    # test_listener_with_tts_and_asr()
+    # test_listener_and_waker()
+    test_recorder_and_asr()
