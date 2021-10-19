@@ -52,13 +52,13 @@ HOST = "222.201.134.203"
 PORT = 17000
 PORT_INFO = 17001
 
-RECORDER_CHUNK_LENGTH = 30  # 一个块=30ms的语音
-LISTENER_CHUNK_LENGTH = 1000  # 一个块=1s的语音
+RECORDER_CHUNK_LENGTH = 480  # 一个块=30ms的语音
+LISTENER_CHUNK_LENGTH = 1000
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 INPUT_RATE = 16000
 OUTPUT_RATE = 8000
-LISTEN_SECONDS = 1
+LISTEN_SECONDS = 1  # 跟Waker模型相关，它只支持16000采样率，片段长1s，改了要重新训练模型
 EXPECTED_WORD = "miya"
 
 PLOT = False
@@ -208,10 +208,9 @@ class MainProcess(object):
             logger.info("Start recording...")
 
             # 在录音之前把图片发给视觉模块，录音结束差不多就能收到识别结果了（视觉模块处理时间2~3s）
-            # temporary thread -> tmpt
-            tmpt = threading.Thread(target=get_visual_info, args=(self,))
-            tmpt.setDaemon(True)
-            tmpt.start()
+            visual_proc = threading.Thread(target=get_visual_info, args=(self,))
+            visual_proc.setDaemon(True)
+            visual_proc.start()
 
             self.state = 1  # human speaking
             # 根据环境音量自动录制一段有声音的音频，支持外部打断
