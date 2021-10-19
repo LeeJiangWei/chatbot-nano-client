@@ -138,6 +138,14 @@ TEST_INFO = [{"category": "kettle", "color": "black", "on": "diningtable", "near
 def visual_to_sentence(query, objects):
     intent, query_category, query_color = [query[i] for i in ("intent", "object", "color",)]
 
+    if intent == "list_all":
+        all_objects = {}
+        for obj in objects:
+            category = EN_ZH_MAPPING[obj["category"]]
+            all_objects[category] = all_objects[category] + 1 if category in all_objects.keys() else 1
+
+        return "我看到了" + "，".join([f"{n}个{o}" for o, n in all_objects.items()]) + "。"
+
     if not query_category:
         return "对不起，我没听清楚您的问题。"
 
@@ -316,14 +324,6 @@ def visual_to_sentence(query, objects):
             return f"{query_category}的旁边有{sentence}。"
         else:
             return f"对不起，我不知道{query_category}旁边有什么东西。"
-
-    elif intent == "list_all":
-        all_objects = {}
-        for obj in objects:
-            category = EN_ZH_MAPPING[obj["category"]]
-            all_objects[category] = all_objects[category] + 1 if category in all_objects.keys() else 1
-
-        return "我看到了" + "，".join([f"{n}个{o}" for o, n in all_objects.items()]) + "。"
 
     else:
         return "对不起，我暂时无法回答这个问题。"
