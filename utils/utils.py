@@ -293,7 +293,7 @@ def visual_to_sentence(query, objects):
         for obj in objects:
             category, on = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "on")]
             if on == query_category:
-                on_objects[category] = on_objects[category] + 1 if on in on_objects.keys() else 1
+                on_objects[category] = on_objects[category] + 1 if category in on_objects.keys() else 1
 
         if len(on_objects) > 0:
             sentence = "，".join([f"{on_num}个{on}" for on, on_num in on_objects.items()])
@@ -306,7 +306,7 @@ def visual_to_sentence(query, objects):
         for obj in objects:
             category, near = [EN_ZH_MAPPING[obj[i]] if obj[i] else None for i in ("category", "near")]
             if near == query_category:
-                near_objects[category] = near_objects[category] + 1 if near in near_objects.keys() else 1
+                near_objects[category] = near_objects[category] + 1 if category in near_objects.keys() else 1
 
         if len(near_objects) > 0:
             sentence = "，".join([f"{near_num}个{near}" for near, near_num in near_objects.items()])
