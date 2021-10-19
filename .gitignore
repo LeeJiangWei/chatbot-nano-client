@@ -5,3 +5,4 @@ tmp*
 *.txt
 *.ipynb
 *.wav
+.vscode/

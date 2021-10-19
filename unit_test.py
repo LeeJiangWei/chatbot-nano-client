@@ -283,8 +283,8 @@ def test_listener_and_waker():
 
 
 def test_recorder_and_asr():
-    r"""结合Recorder模块测试阻塞式录制翻译和流式录制翻译，流式录制翻译预期应在录音结束后很短时间内（比如0.5s）就能给出翻译结果，且
-    该时间不受录音时间长度影响
+    r"""结合Recorder模块和ASR模块，测试固定时长阻塞式录制翻译和流式录制翻译，流式录制翻译预期应在录音结束后很短时间内
+    （比如0.5s）就能给出翻译结果，且该时间不受录音时间长度影响
     """
     print("Recorder模块与ASR模块联合测试开始...")
     recorder = Recorder(rate=INPUT_RATE)
@@ -293,14 +293,14 @@ def test_recorder_and_asr():
     record_seconds = 5  # 录制5s
 
     # 阻塞式录制+流式翻译=阻塞式录制翻译
-    buffer = recorder.record_stream(record_seconds)
+    buffer = recorder.record(record_seconds)
     t1 = time.time()
     result = asr.trans(b"".join(buffer))
     print(f"{result}  非流式翻译用时{time.time() - t1:.2f}s")
 
     # 流式录制+流式翻译=流式录制翻译
     finish_record_event = threading.Event()
-    record_proc = threading.Thread(target=recorder.record_stream,
+    record_proc = threading.Thread(target=recorder.record,
                          kwargs=({
                              "record_seconds": record_seconds,
                              "finish_record_event": finish_record_event
@@ -313,6 +313,39 @@ def test_recorder_and_asr():
     print(f"{result}  录制用时{record_seconds}s, 流式翻译用时{time.time() - t1:.2f}s")
     print("Recorder模块与ASR模块联合测试结束。")
 
+
+def test_recorder_auto_and_asr():
+    r"""结合Recorder模块和ASR模块，测试自动捕捉阻塞式录制翻译和流式录制翻译，流式录制翻译预期应在录音结束后很短时间内
+    （比如0.5s）就能给出翻译结果，且该时间不受录音时间长度影响
+    """
+    print("Recorder模块与ASR模块联合测试开始...")
+    recorder = Recorder(rate=INPUT_RATE, channels=1)
+    # NOTE: ASRVoiceAI不需要设置通道数吗？
+    asr = ASRVoiceAI(INPUT_RATE)
+
+    # 阻塞式录制+流式翻译=阻塞式录制翻译
+    print("Recording...")
+    t1 = time.time()
+    buffer, _ = recorder.record_auto()
+    result = asr.trans(b"".join(buffer))
+    print(f"{result}  非流式录制翻译用时{time.time() - t1:.2f}s")
+
+    # 流式录制+流式翻译=流式录制翻译
+    print("Recording...")
+    t1 = time.time()
+    finish_record_event = threading.Event()
+    record_proc = threading.Thread(target=recorder.record_auto,
+                         kwargs=({
+                             "finish_record_event": finish_record_event
+                         }))
+    record_proc.setDaemon(True)
+    record_proc.start()
+
+    result = asr.trans_stream(recorder.buffer, finish_record_event)
+    print(f"{result}  流式录制翻译用时{time.time() - t1:.2f}s")
+    print("Recorder模块与ASR模块联合测试结束。")
+
+
 if __name__ == "__main__":
     # test_tts_and_player()
     # test_tts_and_asr()
@@ -320,4 +353,6 @@ if __name__ == "__main__":
     # test_player_ws()
     # test_listener_with_tts_and_asr()
     # test_listener_and_waker()
-    test_recorder_and_asr()
+    # test_recorder_and_asr()
+    test_recorder_auto_and_asr()
+

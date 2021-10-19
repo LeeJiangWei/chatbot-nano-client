@@ -109,11 +109,14 @@ class Recorder:
         Args:
             record_seconds (int): record time (second)
             finish_record_event (threading.Event): 结束录制事件，用来向外部传达信息
+        Return:
+            buffer (list): 录制的音频，每个元素是一个块chunk，buffer[-1]是最新录制的数据。
+                整段录制时才会用到，流式录制不需要访问这个返回值
         """
-        self.buffer = []
         if finish_record_event:
             finish_record_event.clear()  # 先复位事件
 
+        self.buffer = []
         stream = self.audio.open(format=self.pformat,
                                  channels=self.channels,
                                  rate=self.rate,
@@ -131,23 +134,28 @@ class Recorder:
 
         return self.buffer
 
-    def record_auto(self, interrupt_event=None, silence_threshold=200, max_silence_second=1):
+    def record_auto(self, interrupt_event=None, finish_record_event=None, silence_threshold=200, max_silence_second=1):
         r"""根据外部环境的声音强度，智能录制有声音的片段。
         连续收到start_thr个有声块(chunk)就认为有人声，开始正式录音（这start_thr个块的数据也会保留）；
         开始录音后连续收到stop_thr个无声块就认为录音结束，退出录音；
         在一次录音过程中累计收到超过exit_thr个无声块时认为本次录音全程静音，退出录音。
         Args:
+            interrupt_event (threading.Event): 打断事件，用于支持外部中断录音过程
+            finish_record_event (threading.Event): 结束录制事件，用来向外部传达信息
             silence_threshold (int): deprecated
             max_silence_second (int): deprecated
         Return:
-            wav_list (list): 每个元素是一个块chunk的音频数据，wav_list[-1]是最近一个时刻录制的
+            buffer (list): 录制的音频，每个元素是一个块chunk，buffer[-1]是最新录制的数据。
+                整段录制时才会用到，流式录制不需要访问这个返回值
             no_sound (bool): True表示本次录制没有录到声音，False表示录到了声音
         """
         assert self.channels == 1, "VAD only support mono channel!"
-        self.buffer = []
+        if finish_record_event:
+            finish_record_event.clear()  # 先复位事件
+        
         # width = pyaudio.get_sample_size(self.pformat)
         # buffer_window_len = int(self.rate / self.chunk_length * max_silence_second)
-
+        self.buffer = []
         stream = self.audio.open(format=self.pformat,
                                  channels=self.channels,
                                  rate=self.rate,
@@ -181,7 +189,8 @@ class Recorder:
                     self.buffer.append(chunk)
                     exit_count = max(0, exit_count - 1)
                 else:
-                    self.buffer = []
+                    # NOTE: 这里不能写self.buffer = []，因为这个buffer给了ASR模块当浅拷贝，赋空值就是新的存储空间了
+                    self.buffer.clear()
                     start_count = 0
                     exit_count += 1
             # start
@@ -197,8 +206,9 @@ class Recorder:
             # if len(self.buffer) > buffer_window_len and rms < silence_threshold:
             #     break
 
+        if finish_record_event:
+            finish_record_event.set()  # 向外部传达录音已结束的信息
         stream.stop_stream()
-
         stream.close()
 
         return self.buffer, exit_count >= exit_thr
@@ -376,32 +386,20 @@ def test_player():
     player.play_unblock(wav_data, event)
 
 
-def test_record_auto():
-    # record_auto only support mono channel
-    recorder = Recorder(rate=INPUT_RATE, channels=1)
-    player = Player(rate=INPUT_RATE, channels=1)
-    print("Recording...")
-    buffer, _ = recorder.record_auto()
-    time.sleep(0.5)  # 避免听说混淆
-    wav_data = b"".join(buffer)
-    print("Playing...")
-    player.play_unblock(wav_data)
-
-
 def test_record():
+    r"""借助Player进行测试"""
     recorder = Recorder(rate=INPUT_RATE)
+    player = Player(rate=INPUT_RATE)
 
     # 测试阻塞式录制
-    print("Unblocking recording:")
+    print("Blocking recording:")
     buffer = recorder.record(5)
-    print("Finish recording.")
 
-    player = Player(rate=INPUT_RATE)
-    wav_data = b"".join(buffer)
-    player.play_unblock(wav_data)
+    print("Finish recording, now playing...")
+    player.play_unblock(b"".join(buffer))
 
     # 测试非阻塞式录制
-    print("Blocking recording:")
+    print("Unlocking recording:")
     finish_record_event = threading.Event()
     s = threading.Thread(target=recorder.record,
                          kwargs=({
@@ -412,11 +410,38 @@ def test_record():
     s.start()
     while not finish_record_event.is_set():
         time.sleep(0.2)
-    print("Finish recording.")
 
-    player = Player(rate=INPUT_RATE)
-    wav_data = b"".join(recorder.buffer)
-    player.play_unblock(wav_data)
+    print("Finish recording, now playing...")
+    player.play_unblock(b"".join(recorder.buffer))
+
+
+def test_record_auto():
+    r"""借助Player进行测试"""
+    # record_auto only support mono channel
+    recorder = Recorder(rate=INPUT_RATE, channels=1)
+    player = Player(rate=INPUT_RATE, channels=1)
+
+    # 测试阻塞式录制
+    print("Blocking recording:")
+    buffer, _ = recorder.record_auto()
+
+    print("Finish recording, now playing...")
+    player.play_unblock(b"".join(buffer))
+
+    # 测试非阻塞式录制
+    print("Unblocking recording:")
+    finish_record_event = threading.Event()
+    s = threading.Thread(target=recorder.record_auto,
+                         kwargs=({
+                             "finish_record_event": finish_record_event
+                         }))
+    s.setDaemon(True)
+    s.start()
+    while not finish_record_event.is_set():
+        time.sleep(0.2)
+
+    print("Finish recording, now playing...")
+    player.play_unblock(b"".join(recorder.buffer))
 
 
 def test_play_unblock_ws():
@@ -436,8 +461,8 @@ def test_listener():
 
 
 if __name__ == "__main__":
-    test_record()
-    # test_record_auto()
+    # test_record()
+    test_record_auto()
     # test_player()
     # test_play_unblock_ws()
     # test_listener()

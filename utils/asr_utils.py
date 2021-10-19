@@ -14,7 +14,7 @@ t1 = datetime.now()
 # 我也不知道为啥要用这种写法，拿到的example代码就是这样写的。
 # 然后调用它们的时候，ws这个变量在这些函数的外部，所以在函数内部可以直接调用，虽然看起来没有定义，但是实际运行起来是
 # 不会报错的
-def on_message_stream(self, message):
+def on_message_test(self, message):
     r"""
     Args:
         message (bytes): utf-8 data received from the server
@@ -98,7 +98,6 @@ def run_stream(ws):
 
 
 def on_open(self):
-
     config = {
         ###### 必须的参数 ######
         # 即将要发送的语音数据的采样率，数值为8000、16000、44100、48000等；
@@ -115,10 +114,12 @@ def on_open(self):
 
         # 是否为Conference类似的实时转写场景，例如，实时连续转写的会议场景应用，需将这个字段设置为True。
         # 如果为True，则每当有（稳定的或不稳定的）转写文本产生，该转写文本将会马上被Server推送给Client；
-        # 如果为False，则每句转写文本将会一直被Server缓存累积着，直到Client发送一个End Of Stream控制信令
-        # 消息通知"语音数据流传输已经EOF，不会再有新数据发送"，此时Server会将累积的转写文本一次性推送给
-        # Client，同时Server不再继续接收新的语音数据流！
-        "liveRecordingScene": False,  # 若已知发送的是一整句话，则置为False
+        # 如果为False，则**每句**转写文本将会一直被Server缓存累积着，直到Client发送一个End Of Stream
+        # 控制信令消息通知"语音数据流传输已经EOF，不会再有新数据发送"，此时Server会将累积的转写文本一次性
+        # 推送给Client，同时Server不再继续接收新的语音数据流！
+        # 不管发送几句话都可以用False，如果用True将会持续收到服务端发回的数据，我们现在不需要在录制的同时
+        # 显示当前翻译的文本，直接最后一起返回就可以了，所以用False
+        "liveRecordingScene": False,
 
         ###### 可选的参数 ######
         # 【注：机器⼈项目不需要打开这个功能】是否在转写文本中将口语转换为书面语
@@ -129,43 +130,7 @@ def on_open(self):
 
     self.send(json.dumps(config))  # 建立连接之后先发送配置，然后才能开始发语音
 
-    _thread.start_new_thread(run, (self,))  # 启动线程执行run()函数发送数据
-
-
-def on_open_stream(self):
-
-    config = {
-        ###### 必须的参数 ######
-        # 即将要发送的语音数据的采样率，数值为8000、16000、44100、48000等；
-        # 注意：这个数值必须跟语音实际的采样率一致。
-        "sampleRate": self.rate,
-        # 是否在转写文本中自动加标点
-        "addPunctuation": True,
-        # 【注：机器⼈项目不需要打开这个功能】是否需要返回转写文本中每个标点的时间信息
-        "needTimeinfo": False,
-        # 是否在转写文本中自动将数字转换为阿拉伯数字
-        "convertNumbers": True,
-        # 静音检测时⻓，单位为10毫秒，大小为[50, 500]
-        "pauseTime": 150,
-
-        # 是否为Conference类似的实时转写场景，例如，实时连续转写的会议场景应用，需将这个字段设置为True。
-        # 如果为True，则每当有（稳定的或不稳定的）转写文本产生，该转写文本将会马上被Server推送给Client；
-        # 如果为False，则每句转写文本将会一直被Server缓存累积着，直到Client发送一个End Of Stream控制信令
-        # 消息通知"语音数据流传输已经EOF，不会再有新数据发送"，此时Server会将累积的转写文本一次性推送给
-        # Client，同时Server不再继续接收新的语音数据流！
-        "liveRecordingScene": False,  # 若已知发送的是一整句话，则置为False
-        # "liveRecordingScene": True,  # （待确认）若要流式发送数据，则置为True
-
-        ###### 可选的参数 ######
-        # 【注：机器⼈项目不需要打开这个功能】是否在转写文本中将口语转换为书面语
-        "oral2written": False,
-        # 如果没有协商`modelName`这个参数，则默认是让服务器选择使用`通用`模型。
-        "modelName": "susie-lvcsr4-general-cn-16k"
-    }
-
-    self.send(json.dumps(config))  # 建立连接之后先发送配置，然后才能开始发语音
-
-    _thread.start_new_thread(run_stream, (self,))  # 启动线程执行run()函数发送数据
+    _thread.start_new_thread(self.run, (self,))  # 启动线程执行run()函数发送数据
 
 
 def on_open_test(self):
@@ -195,7 +160,7 @@ def on_open_test(self):
         t1 = datetime.now()
         print(t1)
 
-    _thread.start_new_thread(run_test,())  # 启动线程执行run()函数发送数据
+    _thread.start_new_thread(run_test, ())  # 启动线程执行run()函数发送数据
 
 
 def test_simple():
@@ -206,7 +171,7 @@ def test_simple():
 
         ws = websocket.WebSocketApp("wss://125.217.235.84:8443/transcribe",
             on_open=on_open_test,  # 连接后自动调用发送函数
-            on_message=on_message_stream,  # 接收消息调用
+            on_message=on_message_test,  # 接收消息调用
             on_error=on_error,
             on_close=on_close
         )
@@ -214,7 +179,6 @@ def test_simple():
 
     except Exception as e: # ws 断开 或者psycopg2.OperationalError
         traceback.print_exc()
-
 
 
 class ASRVoiceAI:
@@ -231,11 +195,12 @@ class ASRVoiceAI:
         self.reset()
 
     def trans(self, wav_data):
-        r"""对一整句话进行翻译，翻译前事先知道只有一句话，最后一定是句子结束符"""
+        r"""对一整句话进行翻译，翻译前事先知道只有一句话，最后一定是句子结束符
+        支持多线程，单线程模式下取返回值作为结果，多线程模式下取ws.asr_result作为结果
+        """
         self.reset()
-        # 强行切换on_open函数
-        self.ws.on_open = on_open
-        self.ws.on_message = on_message
+        # 根据翻译函数选择不同的run函数
+        self.ws.run = run
 
         self.ws.wav_data = wav_data
         self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})  # 开启长连接，每run_forever一次就是执行了从on_open到on_close的整一套流程
@@ -246,14 +211,14 @@ class ASRVoiceAI:
         r"""Author: zhang.haojian
         流式翻译，适合翻译包含了多个句子导致无法在翻译前完成断句的长输入
         在流式翻译过程中，recorder会不断往buffer添加音频数据，ASR模块负责读取翻译，根据Event判断音频录制是否结束
+        支持多线程，单线程模式下取返回值作为结果，多线程模式下取ws.asr_result作为结果
         Args:
             buffer (list): recorder类里面的buffer，一个元素就是一个chunk
             finish_record_event (threading.Event): 结束录制的事件，由Recorder控制
         """
         self.reset()
-        # 强行切换on系列函数
-        self.ws.on_open = on_open_stream
-        self.ws.on_message = on_message_stream
+        # 根据翻译函数选择不同的run函数
+        self.ws.run = run_stream
 
         self.ws.buffer = buffer
         self.ws.finish_record_event = finish_record_event
