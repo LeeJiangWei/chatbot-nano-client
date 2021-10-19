@@ -6,6 +6,7 @@ import sys
 import logging
 import threading
 import time
+import json
 import random
 from PIL import Image, ImageDraw, ImageFont
 
@@ -25,6 +26,7 @@ from vision_perception import K4aCamera, NormalCamera
 
 from vision_perception.client_for_voice import InfoObtainer
 
+SOCKET = ("0.0.0.0", 5588)  # 后端监听的端口
 
 HOST = "222.201.134.203"
 PORT = 17000
@@ -346,6 +348,46 @@ def test_recorder_auto_and_asr():
     print("Recorder模块与ASR模块联合测试结束。")
 
 
+def test_interact():
+    r"""测试主程序中的interact函数，主要是通过大量用例测试rasa的输出结果是否正常"""
+    from main import MainProcess,client_service
+    import socket
+
+    main_process = MainProcess()
+    main_process.init_backend()
+
+    sock = socket.socket()
+    # 该配置允许后端在断开连接后端口立即可用，也即没有TIME_WAIT阶段，调试必备
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(SOCKET)
+    sock.listen(5)
+    recv_sock, recv_addr = sock.accept()
+    t = threading.Thread(target=client_service, args=(recv_sock, recv_addr, main_process, ))
+    t.setDaemon(True)
+    t.start()
+
+    # 目前的键值有：weather location chat want position color quantity function
+    with open("rasa_querys.json", "r") as fp:
+        data = json.load(fp)
+
+    results = []
+
+    for key, query_texts in data.items():
+        print(f"测试rasa对{key}类问题的回答..")
+        for query_text in query_texts:
+            answer = main_process.interact(query_text)
+            # 在中英文混合的字符串s中，len(s)表示s所包含的字符数，中文英文都算1个字符，而中文在print的时候实际上是
+            # 占了两个英文字符的宽度。len(s.encode("gbk")) - len(s) 可以得到s中中文字符的数量，因为编码成gbk之后，
+            # 一个英文字符长度为1，一个中文字符长度为2，所以多出来的长度刚好就是中文字符数量。字符串的ljust方法补足的
+            # 是字符数，也即len(s)，因此直接s.ljust(30)是不行的，含有中文字符多的字符串，最后print出来就会更胖，
+            # 因此需要做一些处理：如果是中文符号，那么要补至的长度就减1，因为这个中文符号最后一个顶俩，print出来
+            # 的长度又加1加了回去
+            results.append(f"{query_text + ' ' * (25 - len(query_text.encode('gbk')))} --> {answer}\n")
+
+    with open("rasa_output.txt", "w") as fp:
+        fp.writelines(results)
+
+
 if __name__ == "__main__":
     # test_tts_and_player()
     # test_tts_and_asr()
@@ -354,5 +396,5 @@ if __name__ == "__main__":
     # test_listener_with_tts_and_asr()
     # test_listener_and_waker()
     # test_recorder_and_asr()
-    test_recorder_auto_and_asr()
-
+    # test_recorder_auto_and_asr()
+    test_interact()

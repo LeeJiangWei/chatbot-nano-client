@@ -217,8 +217,6 @@ class MainProcess(object):
             query_text (str): 仅用于调试，当其不为None时，不进行录音，直接以query_text作为询问句，提高调试速度
         """
         while True:
-            logger.info("Start recording...")
-
             # 在录音之前把图片发给视觉模块，录音结束差不多就能收到识别结果了（视觉模块处理时间2~3s）
             visual_proc = threading.Thread(target=get_visual_info, args=(self,))
             visual_proc.setDaemon(True)
@@ -226,6 +224,7 @@ class MainProcess(object):
 
             self.state = 1  # human speaking
             if query_text is None:
+                logger.info("Start recording...")
                 # 流式录制+流式翻译=流式录制翻译
 
                 t1 = time.time()
@@ -251,9 +250,8 @@ class MainProcess(object):
                 logger.info(f"Recording: {self.recorder.cost_time:.2f}s")
                 logger.info(f"ASR: {time.time() - t1 - self.recorder.cost_time:.2f}s")
 
-                logger.info(f"近义词替换前：{recognized_str}")
+                logger.info(f"原始文本：{recognized_str}")
                 recognized_str = synonym_substitution(recognized_str)
-                logger.info(f"近义词替换后：{recognized_str}")
 
                 if len(remove_punctuation(recognized_str)) <= 1:  # 去掉一些偶然的噪声被识别为“嗯”等单字导致误判有人说话的情况
                     recognized_str = "(无人声)"
@@ -265,6 +263,8 @@ class MainProcess(object):
                 recognized_str = query_text
 
             groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+            recognized_str = remove_punctuation(recognized_str)
+            logger.info(f"处理后文本：{recognized_str}")
 
             t1 = time.time()
             visual_proc.join()  # 等待获取视觉信息的线程运行结束，也即收到视觉模块的回复
@@ -280,6 +280,9 @@ class MainProcess(object):
 
             self.state = 2  # robot speaking
             groupSendPackage(Package.response_word_result(response_word), self.clients)
+            if query_text:  # 如果是直接给出文本，得到一次答复之后就退出，因为重复问同一句话没有意义
+                return response_word
+
             start = time.time()
             ws = self.tts.start_tts(response_word)
             self.interrupt_event.clear()
@@ -324,6 +327,9 @@ def main():
     sock.listen(5)
     while True:
         recv_sock, recv_addr = sock.accept()
+        # NOTE: 这里需要传main_process类，导致上面不能把main_process包进启动进程里面，而不包进去会导致如果在实例化
+        # MainProcess的时候用了初始化了tf的计算图，在多线程的时候就会报错，所以二者无法兼得，后续看看有没有谁有什么
+        # 好办法处理一下
         t = threading.Thread(target=client_service, args=(recv_sock, recv_addr, main_process, ))
         t.setDaemon(True)
         t.start()
