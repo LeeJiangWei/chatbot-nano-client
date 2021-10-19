@@ -99,6 +99,7 @@ class Recorder:
 
         self.audio = pyaudio.PyAudio()
         self.buffer = []
+        self.no_sound = True  # no_sound写成成员是为了多线程调用record_auto的时候外部依然可以拿到
 
     def __del__(self):
         self.audio.terminate()
@@ -152,6 +153,7 @@ class Recorder:
         assert self.channels == 1, "VAD only support mono channel!"
         if finish_record_event:
             finish_record_event.clear()  # 先复位事件
+        t1 = time.time()
         
         # width = pyaudio.get_sample_size(self.pformat)
         # buffer_window_len = int(self.rate / self.chunk_length * max_silence_second)
@@ -205,13 +207,16 @@ class Recorder:
 
             # if len(self.buffer) > buffer_window_len and rms < silence_threshold:
             #     break
+        self.no_sound = exit_count >= exit_thr
 
         if finish_record_event:
             finish_record_event.set()  # 向外部传达录音已结束的信息
         stream.stop_stream()
         stream.close()
 
-        return self.buffer, exit_count >= exit_thr
+        self.cost_time = time.time() - t1  # 流式录制翻译没办法直接获取录音模块花费的时间，只好出此下策
+
+        return self.buffer, self.no_sound
 
 
 class Player:

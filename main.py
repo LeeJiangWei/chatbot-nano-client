@@ -114,6 +114,27 @@ class MainProcess(object):
             self.state = 0
         return
 
+    def init_backend(self):
+        # 定义用于后端自己的变量，由于当前版本是在外头的main函数里面调用了MainProcess.main()，即使用一个实例也没用
+        self.finish_stt_event = threading.Event()  # 用于流式STT中判断STT是否已经结束
+        self.finish_record_event = threading.Event()  # 用于流式录音+流式ASR中判断是否已经结束录音
+        self.interrupt_event = threading.Event()  # 用于判断是否收到键盘的打断信号
+
+        self.visual_info = {}  # 用于后续接收语音信息，若不初始化会在get_visual_info时报错
+
+        self.listener = Listener(FORMAT, CHANNELS, INPUT_RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
+        self.vpr = VoicePrint()
+        self.player = Player(rate=OUTPUT_RATE)
+        self.waker = Waker(EXPECTED_WORD)
+
+        # 下面的对象都是用于interact()的
+        self.scene_cam = K4aCamera(HOST, PORT)
+        self.emotion_cam = NormalCamera(0, "emotion", HOST, PORT)
+        self.I = InfoObtainer(HOST, PORT_INFO)
+        self.recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
+        self.asr = ASRVoiceAI(INPUT_RATE)
+        self.tts = TTSBiaobei()
+
     def main(self):
         r"""
         时序图：─│┌┐└┘├┴┬┤┼╵
@@ -124,39 +145,24 @@ class MainProcess(object):
         互动阶段：recorder.record_auto()录制用户语音 ───┬───┬ 检测到有人说话 ─── asr.trans()流式语音转文字 ─── 发送识别出的文本到前端 ─── get_answer()获取响应文本 ─── tts.start_tts()文字转语音, 流式加载音频  ────┬─继续recorder.record_auto()录制用户语音
                   └─同时get_visual_info()获取视觉信息 ─┘   └ 没检测到有人说话 ─── 退出互动阶段                                                                       └─player.play_unblock_ws()非阻塞式播放音频─┘
         """
-        self.finish_stt_event = threading.Event()  # 用于流式STT中判断STT是否已经结束
-        self.interrupt_event = threading.Event()  # 用于判断是否收到键盘的打断信号
-
-        self.visual_info = {}  # 用于后续接收语音信息，若不初始化会在get_visual_info时报错
-
-        listener = Listener(FORMAT, CHANNELS, INPUT_RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
-        vpr = VoicePrint()
-        self.player = Player(rate=OUTPUT_RATE)
-        waker = Waker(EXPECTED_WORD)
-
-        # 下面的对象都是用于interact()的
-        self.scene_cam = K4aCamera(HOST, PORT)
-        self.emotion_cam = NormalCamera(0, "emotion", HOST, PORT)
-        self.I = InfoObtainer(HOST, PORT_INFO)
-        self.recorder = Recorder(FORMAT, CHANNELS, INPUT_RATE, RECORDER_CHUNK_LENGTH)
-        self.asr = ASRVoiceAI(INPUT_RATE)
-        self.tts = TTSBiaobei()
+        # 由于未知原因，把init_backend放在__init__的位置时会导致tf报错，不知道多线程做了什么事情，或许是tf的东西不支持多线程？
+        self.init_backend()
 
         with tf.compat.v1.Session() as sess:
             # main loop
             while True:
-                listener.listen()
+                self.listener.listen()
                 # keyword spotting loop
-                print("Listening...")
-                while not waker.waked_up():
+                logger.info("Listening...")
+                while not self.waker.waked_up():
                     # frames包含了最近LISTEN_SECONDS内的音频数据
-                    frames = listener.buffer[-int(INPUT_RATE / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):]
+                    frames = self.listener.buffer[-int(INPUT_RATE / LISTENER_CHUNK_LENGTH * LISTEN_SECONDS):]
                     wav_data = bytes_to_wav_data(b"".join(frames), FORMAT, CHANNELS, INPUT_RATE)
-                    waker.update(wav_data, sess, PLOT)
+                    self.waker.update(wav_data, sess, PLOT)
 
-                waker.reset()  # 重置waker的置信度等参数，使其下轮循环能重新进入内层while循环，等待下一次唤醒
-                listener.stop()
-                print("WAKEUP!")
+                self.waker.reset()  # 重置waker的置信度等参数，使其下轮循环能重新进入内层while循环，等待下一次唤醒
+                self.listener.stop()
+                logger.info("WAKEUP!")
 
                 # save_wav(b"".join(frames), "tmp.wav")  # debug临时语句，保存原本音频流以确保play之前的部分都正常运行
 
@@ -169,15 +175,15 @@ class MainProcess(object):
                 # self.state = 0
 
                 t1 = time.time()
-                spk_name = vpr.get_spk_name(wav_data)
-                print(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
+                spk_name = self.vpr.get_spk_name(wav_data)
+                logger.info(f"声纹识别耗费时间为：{time.time() - t1:.2f}秒")
                 response_str = spk_name + "你好!"
 
                 # 针对用户情绪，在原有的欢迎语上添加对应的句子
                 self.emotion_cam.send_single_image()
                 data = {"require": "emotion"}
                 result = self.I.obtain(data, False)
-                print("情绪识别结果：", result["emotion"])
+                logger.info(f"情绪识别结果：{result['emotion']}")
                 welcome_word_suffix = {  # 分开心、不开心、平静三类
                     "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词", "嘤嘤嘤，不要这么冷漠嘛", "戳戳，笑一个"],
                     "happy": ["你看起来心情不错", "你看起来很开心，我猜是捡到钱了", "你笑起来真好看", "你的笑容让我沉醉"],
@@ -205,7 +211,11 @@ class MainProcess(object):
                 # 进入互动环节，这个版本互动跟等待唤醒是分开的，不会相互纠缠，也没有唤醒词打断功能，只支持按键打断
                 self.interact()
 
-    def interact(self):
+    def interact(self, query_text=None):
+        r"""
+        Args:
+            query_text (str): 仅用于调试，当其不为None时，不进行录音，直接以query_text作为询问句，提高调试速度
+        """
         while True:
             logger.info("Start recording...")
 
@@ -215,59 +225,58 @@ class MainProcess(object):
             visual_proc.start()
 
             self.state = 1  # human speaking
-            # 根据环境音量自动录制一段有声音的音频，支持外部打断
-            self.interrupt_event.clear()  # 每次用一个事件之前都要先clear，防止是前面留下来的
-            wav_list, no_sound = self.recorder.record_auto(interrupt_event=self.interrupt_event)
-            logger.info("Stop recording.")
-            if no_sound:
-                logger.info("No sound detected, conversation canceled.")
-                break
+            if query_text is None:
+                # 流式录制+流式翻译=流式录制翻译
 
-            logger.info("Waiting server...")
-            self.state = 3  # computing
+                t1 = time.time()
+                # 根据环境音量自动录制一段有声音的音频，支持外部打断
+                self.interrupt_event.clear()  # 每次用一个事件之前都要先clear，防止是前面留下来的
+                record_proc = threading.Thread(target=self.recorder.record_auto,
+                    kwargs=({
+                        "interrupt_event": self.interrupt_event,
+                        "finish_record_event": self.finish_record_event
+                    }))
+                record_proc.setDaemon(True)
+                record_proc.start()
 
-            while not self.visual_info:  # 等待直到visual_info非空，也即收到视觉模块的回复
-                time.sleep(0.1)
+                recognized_str = self.asr.trans_stream(self.recorder.buffer, self.finish_record_event)
 
-            with open("visual_info.txt", "w") as fp:
-                fp.write("时间戳:" + self.visual_info["timestamp"] + "\n")
-                for item in self.visual_info["attribute"]:
-                    fp.write(str(item) + "\n")
+                logger.info("Stop recording, waiting server...")
+                self.state = 3  # computing
 
-            img = Image.open(self.scene_cam.savepath).convert("RGB")
-            drawer = ImageDraw.ImageDraw(img)
-            fontsize = 13
-            font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
-            for attr in self.visual_info["attribute"]:
-                # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
-                # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
-                drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
-                # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
-                drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
-            img.save("tmp2.jpg")
-            with open("tmp2.jpg", "rb") as fp:
-                # 赋值后就会自动把图像发给前端
-                self.detection_result = transform_for_send(fp.read())
+                if self.recorder.no_sound:
+                    logger.info("No sound detected, conversation canceled.")
+                    break
+                
+                logger.info(f"Recording: {self.recorder.cost_time:.2f}s")
+                logger.info(f"ASR: {time.time() - t1 - self.recorder.cost_time:.2f}s")
 
-            t0 = time.time()
-            wav_data = bytes_to_wav_data(b"".join(wav_list))
-            recognized_str = self.asr.trans(wav_data)
-            print("近义词替换前：", recognized_str)
-            recognized_str = synonym_substitution(recognized_str)
-            print("近义词替换后：", recognized_str)
+                logger.info(f"近义词替换前：{recognized_str}")
+                recognized_str = synonym_substitution(recognized_str)
+                logger.info(f"近义词替换后：{recognized_str}")
 
-            if len(remove_punctuation(recognized_str)) <= 1:  # 去掉一些偶然的噪声被识别为“嗯”等单字导致误判有人说话的情况
-                recognized_str = "(无人声)"
-            t1 = time.time()
-            print("recognition:", t1 - t0)
-            if recognized_str == "(无人声)" or "没事" in recognized_str:
-                break
-            recognized_str = recognized_str.replace("~", "")
+                if len(remove_punctuation(recognized_str)) <= 1:  # 去掉一些偶然的噪声被识别为“嗯”等单字导致误判有人说话的情况
+                    recognized_str = "(无人声)"
+                if recognized_str == "(无人声)" or "没事" in recognized_str:
+                    break
+                recognized_str = recognized_str.replace("~", "")
+
+            else:
+                recognized_str = query_text
+
             groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+
+            t1 = time.time()
+            visual_proc.join()  # 等待获取视觉信息的线程运行结束，也即收到视觉模块的回复
+            logger.info(f"Get visual info: {time.time() - t1:.2f}s")
+            # 获取回复文本跟画图相互独立，另外开一个线程
+            draw_proc = threading.Thread(target=self.draw_visual_result, args=())
+            draw_proc.setDaemon(True)
+            draw_proc.start()
 
             start = time.time()
             response_word, self.sentences = get_answer(recognized_str, self.visual_info["attribute"])
-            print("rasa:", time.time() - start)
+            logger.info(f"Rasa: {time.time() - start:.2f}s")
 
             self.state = 2  # robot speaking
             groupSendPackage(Package.response_word_result(response_word), self.clients)
@@ -275,9 +284,30 @@ class MainProcess(object):
             ws = self.tts.start_tts(response_word)
             self.interrupt_event.clear()
             self.player.play_unblock_ws(ws, self.interrupt_event)
-            print("tts & play:", time.time() - start)
+            logger.info(f"TTS & play: {time.time() - start:.2f}s")
 
         self.state = 0  # waiting
+
+    def draw_visual_result(self):
+        with open("visual_info.txt", "w") as fp:
+            fp.write("时间戳:" + self.visual_info["timestamp"] + "\n")
+            for item in self.visual_info["attribute"]:
+                fp.write(str(item) + "\n")
+
+        img = Image.open(self.scene_cam.savepath).convert("RGB")
+        drawer = ImageDraw.ImageDraw(img)
+        fontsize = 13
+        font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
+        for attr in self.visual_info["attribute"]:
+            # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
+            # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+            drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
+            # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
+            drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
+        img.save("tmp2.jpg")
+        with open("tmp2.jpg", "rb") as fp:
+            # 赋值后就会自动把图像发给前端
+            self.detection_result = transform_for_send(fp.read())
 
 
 def main():

@@ -90,49 +90,6 @@ def get_3DPosition(depth, rgb_intrinsics, resolution=1):
     return dpt_3d
 
 
-# def recv_data_and_load(s):
-#     r"""从套接字s中收数据并转化回python的数据格式"""
-#     data = s.recv(4096)
-#     data = pickle.loads(data, fix_imports=True, encoding="bytes")
-
-#     # data即为恢复出的python数据类型的数据
-#     return data
-
-
-# def send_data(s, data):
-#     r"""把python数据类型的data通过套接字s发送出去"""
-#     data = pickle.dumps(data, 0)
-#     s.send(data)
-
-
-def recv_data_and_load(s):
-    r"""从套接字s中收数据并转化回python的数据格式，client按需请求，所以只会收到一帧数据"""
-    payload_size = struct.calcsize(">L")
-    print("payload_size: {}".format(payload_size))
-    recv_patch_len = 8192
-
-    # 拿到本帧数据长度msg_size
-    data = s.recv(payload_size)
-    msg_size = struct.unpack(">L", data)[0]
-    print("msg_size: {}".format(msg_size))
-
-    while len(data) < msg_size:
-        rec = s.recv(recv_patch_len)
-        data += rec
-    # pickle.loads的数据不应包含4字节的报头
-    data = pickle.loads(data[payload_size:], fix_imports=True, encoding="bytes")
-
-    # data即为恢复出的python数据类型的数据
-    return data
-
-
-def send_data(s, data):
-    r"""把python数据类型的data通过套接字s发送出去"""
-    data = pickle.dumps(data, 0)
-    size = len(data)
-    s.sendall(struct.pack(">L", size) + data)
-
-
 def bgr_to_rgb(color_dict):
     r"""cv2画框的时候使用，PIL的颜色参数是RGB，cv2是BGR
     """
