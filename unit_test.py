@@ -7,7 +7,6 @@ import logging
 import threading
 import time
 import json
-import random
 from PIL import Image, ImageDraw, ImageFont
 
 import pyaudio
@@ -20,10 +19,8 @@ from utils.utils import bytes_to_wav_data, save_wav, get_answer, synonym_substit
 from utils.asr_utils import ASRVoiceAI
 from utils.vision_utils import get_color_dict
 from utils.tts_utils import TTSBiaobei
-from api import (str_to_wav_bin_unblock, str_to_wav_bin,
-                 VoicePrint)
+from api import (str_to_wav_bin, VoicePrint, BaiduDialogue)
 from vision_perception import K4aCamera, NormalCamera
-
 from vision_perception.client_for_voice import InfoObtainer
 
 SOCKET = ("0.0.0.0", 5588)  # 后端监听的端口
@@ -88,7 +85,11 @@ def test_tts_and_player():
 
 def test_tts_and_asr(input_list=[]):
     r"""Author: zhang.haojian
-    测试TTS模块和ASR模块的性能，将一个文本输入TTS模块转成语音，再经过ASR模块转成文本，预期应与原始文本一致
+    测试TTS模块和ASR模块的性能，将一个文本输入TTS模块转成语音，再经过ASR模块转成文本，预期应与原始文本基本一致
+    之所以不是“完全一致”，zhang.weibin作了如下解释：
+    输入一样的文本，TTS每次出来的字节流可能略有差异，因为系统在提取特征的时候会加入一定的随机性，确保鲁棒性
+    TTS的训练目标不是ASR准确度高，而是自然度和可懂度好，所以TTS输出经过ASR后不准也是可以理解的，十分标准的发音
+    会降低自然度，对用户听感反而没有那么好
     """
     print("TTS模块和ASR模块联合功能测试开始...")
     # 每个元素就是一个测试用例
@@ -100,11 +101,11 @@ def test_tts_and_asr(input_list=[]):
         "盆栽在哪里",
     ]
 
+    # str_to_wav_bin的输出采样率是OUTPUT_RATE，所以这里是OUTPUT_RATE，不是INPUT_RATE
     asr = ASRVoiceAI(OUTPUT_RATE)
     t1 = time.time()
     for s in input_list:
         wav_data = str_to_wav_bin(s)
-        # str_to_wav_bin的输出采样率是OUTPUT_RATE，所以这里是OUTPUT_RATE，不是INPUT_RATE
         result = asr.trans(wav_data)
         print(f"{s} {result} {s == result}  用时{time.time() - t1:.2f}s")
         t1 = time.time()
@@ -120,14 +121,15 @@ def test_cam_and_qas(input_list=[]):
     print("摄像头跟问答系统联合功能测试开始...")
     # 每个元素就是一个测试用例
     input_list = [
+        "1+1等于几",  # 测试聊天API的知识盲区（目前这个用例会被归到内部逻辑问数量，后续看看怎么处理）
         "今天天气怎么样",
         "广东广州",
         "你好米娅",
-        # "没事了",  # 退出词，如果启用，预期应在这个位置退出循环
+        "没事了",  # 退出词，如果启用，预期应在这个位置退出循环
         "杯子在哪里",
         "咖啡机在哪里",
         "盆栽在哪里",
-        # "",  # 无人声，如果启用，预期应在这个位置退出循环
+        "",  # 无人声，如果启用，预期应在这个位置退出循环
         "讲一个笑话吧",
         "",  # 表示最后的静音段
     ]
@@ -135,12 +137,19 @@ def test_cam_and_qas(input_list=[]):
     I = InfoObtainer(HOST, PORT_INFO)
     # NOTE: 要用到摄像头时记得加上sudo！
     scene_cam = K4aCamera(HOST, PORT)
+    chatter = BaiduDialogue()
 
     # 当前版本一次唤醒发送一张图片
     scene_cam.send_single_image()
     for recognized_str in input_list:
         t1 = time.time()
         logger.info("Waiting server...")
+
+        # time.sleep(0.5)  # 仅在测试时休眠0.5秒，用于防止QPS>1
+        # 聊天api不需要依赖视觉信息，所以可以先开起来，再接着等视觉信息
+        chat_proc = threading.Thread(target=chatter.run, args=(recognized_str,))
+        chat_proc.setDaemon(True)
+        chat_proc.start()
 
         data = {"require": "attribute"}
         result = I.obtain(data, False)
@@ -171,7 +180,7 @@ def test_cam_and_qas(input_list=[]):
         if recognized_str == "(无人声)" or "没事" in recognized_str:
             break
 
-        response_word, sentences = get_answer(recognized_str, result["attribute"])
+        response_word, sentences = get_answer(chatter, recognized_str, result["attribute"])
         print(response_word, sentences)
         print(f"请求视觉信息用时: {t2 - t1:.2f}s, rasa用时: {time.time() - t2:.2f}s")
         recognized_str = recognized_str.replace("~", "")
@@ -372,14 +381,14 @@ def test_interact():
         data = json.load(fp)
 
     results = []
-    focused_keys = ["chat"]
+    focused_keys = ["position"]
     ignore_keys = ["ignore"]
 
     for key, query_texts in data.items():
         # if key not in focused_keys:
         #     continue
-        # if key in ignore_keys:
-        #     continue
+        if key in ignore_keys:
+            continue
         print(f"测试rasa对{key}类问题的回答..")
         for query_text in query_texts:
             answer = main_process.interact(query_text)
@@ -395,6 +404,12 @@ def test_interact():
         fp.writelines(results)
 
 
+def debug():
+    player = Player(rate=OUTPUT_RATE)
+    s = "华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学华南理工大学"
+    wav_data = str_to_wav_bin(s, speed=0.0)
+    player.play_unblock(wav_data)
+
 if __name__ == "__main__":
     # test_tts_and_player()
     # test_tts_and_asr()
@@ -405,3 +420,4 @@ if __name__ == "__main__":
     # test_recorder_and_asr()
     # test_recorder_auto_and_asr()
     test_interact()
+    # debug()

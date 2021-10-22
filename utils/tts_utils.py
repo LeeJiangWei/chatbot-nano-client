@@ -39,6 +39,7 @@ def on_message(self, message):
     assert self.next_idx == response["data"]["idx"], "unknown error of response['data']['idx']"
     assert response["data"]["audio_type"] == "audio/pcm", "audio type of received data is not pcm"
 
+    # PCM格式数据就是没有wav头的纯数据，给它加上个wav头就变成wav格式数据了
     self.wav_data += b64decode(response["data"]["audio_data"])
 
     if response["data"]["end_flag"]:  # 手里的是最后一个数据块了，后面没数据了，关掉

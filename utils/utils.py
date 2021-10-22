@@ -375,18 +375,22 @@ def remove_punctuation(recognized_str):
     return recognized_str
 
 
-def get_answer(input_text, visual_info):
+def get_answer(chatter, input_text, visual_info):
     r"""根据输入的文本，判断其意图并给出相应的答复
     Return:
         text (str): 回应的原始文本，用于发送给前端显示
         sentences (list): 每个元素是一个句子的文本，用于转音频和播音
     """
-    # 先前的设计是rasa的responses可能包含多个元素，比如调用api前回一句，调用api后再把真正的回复说出来，现在只是一轮回复，所以直接取[0]
+    # 先前的设计是rasa的responses可能包含多个元素，比如调用api前回一句，调用api后再把真正的回复说出来，现在只是一轮回复，所以直接取[0]    
     response = api.question_to_answer(input_text)[0]
     text = ""
-    if "text" in response.keys():
-        text = response["text"]
-    elif "custom" in response.keys():
+    if response["custom"]["intent"] == "out_of_scope":
+        # text = chatter.run(input_text)  # 如果没有在外面开多线程，在这里再调用api也行，会慢个0.2s
+        while not chatter.chat_response:
+            # 如果要转外部逻辑，就等聊天api调用的线程结束，chat_response就不再为空串
+            time.sleep(0.1)
+        text = chatter.chat_response
+    else:
         text = visual_to_sentence(response["custom"], visual_info)
     text = text.replace("~", "")  # ~符号在句子末尾时TTS模块会给出突然的静音，用户体验不好（在句子中间倒还算正常）
 

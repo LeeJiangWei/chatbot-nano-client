@@ -21,7 +21,7 @@ from utils.tts_utils import TTSBiaobei
 from utils.vision_utils import get_color_dict
 from utils.package_utils import (Package, groupSendPackage, transform_for_send,
     client_service)
-from api import VoicePrint
+from api import VoicePrint, BaiduDialogue
 from vision_perception import K4aCamera, NormalCamera
 from vision_perception.client_for_voice import InfoObtainer
 from vision_perception.client import get_visual_info
@@ -124,6 +124,7 @@ class MainProcess(object):
 
         self.listener = Listener(FORMAT, CHANNELS, INPUT_RATE, LISTENER_CHUNK_LENGTH, LISTEN_SECONDS)
         self.vpr = VoicePrint()
+        self.chatter = BaiduDialogue()
         self.player = Player(rate=OUTPUT_RATE)
         self.waker = Waker(EXPECTED_WORD)
 
@@ -266,6 +267,11 @@ class MainProcess(object):
             recognized_str = remove_punctuation(recognized_str)
             logger.info(f"处理后文本：{recognized_str}")
 
+            # 聊天api不需要依赖视觉信息，所以可以先开起来，再接着等视觉信息
+            chat_proc = threading.Thread(target=self.chatter.run, args=(recognized_str,))
+            chat_proc.setDaemon(True)
+            chat_proc.start()
+
             t1 = time.time()
             visual_proc.join()  # 等待获取视觉信息的线程运行结束，也即收到视觉模块的回复
             logger.info(f"Get visual info: {time.time() - t1:.2f}s")
@@ -275,11 +281,13 @@ class MainProcess(object):
             draw_proc.start()
 
             start = time.time()
-            response_word, self.sentences = get_answer(recognized_str, self.visual_info["attribute"])
+            response_word, self.sentences = get_answer(self.chatter, recognized_str, self.visual_info["attribute"])
             logger.info(f"Rasa: {time.time() - start:.2f}s")
 
             self.state = 2  # robot speaking
             groupSendPackage(Package.response_word_result(response_word), self.clients)
+            if query_text:  # 如果是直接给出文本，得到一次答复之后就退出，因为重复问同一句话没有意义
+                return response_word
 
             self.player.t1 = time.time()
             tts_proc = threading.Thread(target=self.tts.start_tts, args=(response_word,))
@@ -288,9 +296,6 @@ class MainProcess(object):
             self.interrupt_event.clear()
             self.player.play_unblock_ws(self.tts.ws, self.interrupt_event)
             logger.info(f"音频准备时间：{self.player.start_time:.2f}s")
-
-            if query_text:  # 如果是直接给出文本，得到一次答复之后就退出，因为重复问同一句话没有意义
-                return response_word
 
         self.state = 0  # waiting
 

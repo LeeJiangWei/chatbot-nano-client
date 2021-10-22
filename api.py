@@ -1,3 +1,4 @@
+# 跟调接口相关的函数和类都放在这里
 import time
 import re
 import json
@@ -7,6 +8,7 @@ import requests
 import threading
 import urllib3
 urllib3.disable_warnings()
+import random
 
 SERVER_HOST = "222.201.134.203"
 # SERVER_HOST = "gentlecomet.com"
@@ -167,18 +169,35 @@ def question_to_answer(message: str, sender: str = "nano"):
     return responses
 
 
-def str_to_wav_bin(input_str: str) -> bytes:
+def str_to_wav_bin(input_str: str, speed=5.8) -> bytes:
     # speed: 语速，[0.0, 9.0]，默认5.0
-    base_url = "http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed=5.8&update=1&access_token=default&domain=1" \
+    base_url_get = f"http://125.217.235.84:18100/tts?audiotype=6&rate=1&speed={speed}&update=1&access_token=default&domain=1" \
                "&language=zh&voice_name=Jingjingcc&&text= "
+    base_url_post = "http://125.217.235.84:18100/tts"
     # voiceai的TTS模块目前只支持8000采样率，在播放音频时需要注意保持采样率一致
     # NOTE: 据说语音名称改成Jingjing就可以16K了，不过我还没试
     # 当回答包括多个句子时（常见于闲聊模式），文本太长会导致对面返回空数据，所以我们要自己把数据分段发送
+    method = "get"
     result = b""
     for sentence in re.split("；|？|。|,|！|!", input_str):
         if sentence:  # GET方法限制不超过250 UTF-8字符，超过就会返回空数据，太多要用POST
-            r = requests.get(base_url + sentence)
-            # r = requests.post(TTS_URL, json={"text": input_str})
+            if method == "get":
+                r = requests.get(base_url_get + sentence)
+            elif method == "post":
+                from ipdb import set_trace
+                set_trace()
+                data = {
+                    "access_token": "default",
+                    "domain": "1",
+                    "language": "zh",
+                    "voice_name": "Jingjingcc",
+                    "audiotype": "6",
+                    "rate": "1",
+                    "speed": f"{speed}",
+                    "update": "1",
+                    "text": sentence,
+                }
+                r = requests.post(base_url_post, data=data)
             result += r.content
     return result
 
@@ -205,7 +224,6 @@ def str_to_wav_bin_unblock(sentences, wav_data_queue, finish_stt_event) -> bytes
 
 class VoicePrint:
     def __init__(self):
-
         self.tag2name = json.load(open("./spk_name.json"))
 
     @staticmethod
@@ -314,3 +332,147 @@ class VoicePrint:
             return self.tag2name[top_tag]
         else:  # 遇到不认识的都当做客人，后续可能会接入注册声纹的功能
             return self.tag2name['unknown']
+
+
+ERROR_RESPONSE = [
+    "你在说啥呀，我怎么听不懂捏。",
+    "这就触及到我的知识盲区啦。",
+    "刚才一不留神没听清楚你说了啥，能再说一次吗。",
+    "哈哈哈，这是啥意思。",
+]
+
+class BaiduDialogue():
+    r"""Author: li.jiangwei & zhang.haojian
+    原本放在rasa模块，现在搬到client的百度聊天API
+    """
+    def __init__(self):
+        with open("./profile.json") as f:
+            profile = json.load(f)
+        self.key = profile["baidu_api_key"]
+        self.secret = profile["baidu_api_secret"]
+        self.service_id = profile["baidu_service_id"]
+
+        self.access_token = self.get_access_token()
+        self.session_id = ""
+        print("Baidu dialogue successfully initialized. Access token: ", self.access_token)
+
+        self.chat_response = ""  # 保存聊天结果，用于多线程
+        # self.last_request_time = time.time()  # 保存上一次请求的时间，确保两次请求相隔超过1秒，因为我们的服务QPS限额是1
+
+    def get_access_token(self):
+        resp = requests.get("https://aip.baidubce.com/oauth/2.0/token", params={
+            "grant_type": "client_credentials",
+            "client_id": self.key,
+            "client_secret": self.secret
+        }).json()
+
+        return resp["access_token"]
+
+    def run(
+            self, input_text
+    ):
+        self.chat_response = ""
+        print("Input to turing bot: ", input_text)
+
+        body = {
+            "version": "3.0",
+            "service_id": self.service_id,
+            "log_id": "server",
+            "session_id": self.session_id,
+            "request": {
+                "terminal_id": "00000001",
+                "query": input_text
+            }
+        }
+
+        url = f"https://aip.baidubce.com/rpc/2.0/unit/service/v3/chat?access_token={self.access_token}"
+
+        # NOTE: 不知道为啥，设到1.22秒有时候还是会报错，好像这个时间并没有估计准确，好比上一次数据在路上走了2s，
+        # api处理了0.5s，花0.2s发回来，我们看到的是两次访问相差2.7s，然后第二次请求在路上走了0.2s，对服务器来说
+        # 两次请求相差0.9s，因此还是会报QPS错误，所以这个时间不好估计，先不做处理，反正对话时间肯定长过1s了
+        # time.sleep(max(0, 1.22 - (time.time() - self.last_request_time)))  # 保持两次请求间隔大于1秒
+        # self.last_request_time = time.time()
+        response = requests.post(url, json=body).json()
+
+        error_code = response["error_code"]
+        if error_code != 0:
+            # see: https://ai.baidu.com/ai-doc/UNIT/qkpzeloou#%E9%94%99%E8%AF%AF%E4%BF%A1%E6%81%AF
+            err_msg = response["error_msg"]
+
+            print(f"Baidu dialogue error {error_code}: ", err_msg)
+            text = random.choice(ERROR_RESPONSE)
+        else:
+            result = response["result"]
+
+            self.session_id = result["session_id"]
+            if "actions" not in result["responses"][0]:
+                # 一般是QPS超限，常发生于测试时，用于整个系统应该不会到这里
+                text = "你说话太快啦，坐下来喝杯水吧"
+            else:
+                text = result["responses"][0]["actions"][0]["say"]
+
+            if text[-1] not in "，。？！“”：；":
+                text += "。"
+            # print("Output from baidu bot: ", text)
+        self.chat_response = text
+        return self.chat_response
+
+
+def test_baidu_dialogue():
+    data = {
+        "weather": [
+            "今天天气怎么样？",
+            "广东广州",
+            "明天天气怎么样？",
+            "深圳福田区",
+            "后天天气怎么样？"
+        ],
+        "location": [
+            "广州在哪里？",
+            "上海在哪里？",
+            "北京在哪里？"
+        ],
+        "chat": [
+            "讲一个笑话吧~",
+            "讲个笑话吧！"
+        ],
+        "want": [
+            "我想喝水。",
+            "我想喝咖啡",
+            "我想睡觉",
+            "我想休息"
+    ]}
+
+    B = BaiduDialogue()
+    for key, query_texts in data.items():
+        print(f"测试百度API对{key}类问题的回答..")
+        for query_text in query_texts:
+            t1 = time.time()
+            answer = B.run(query_text)
+            print(f"{query_text + ' ' * (25 - len(query_text.encode('gbk')))} --> {answer}")
+            time.sleep(0.5)  # 保证QPS<1
+            print(f"time: {time.time() - t1:.2f}s")
+
+
+def test():
+    input_texts = [
+        "今天天气怎么样？",  # out_of_scope
+        "广东广州",  # out_of_scope
+        "北京在哪里？",  # out_of_scope
+        "讲一个笑话吧~",  # out_of_scope
+        "我想喝咖啡",  # out_of_scope
+        "桌子在哪里",  # ask_object_position
+        "微波炉是什么颜色的呢？",  # ask_object_color
+        "有几个箱子？",  # ask_object_quantity
+        "水龙头有什么功能呀？",  # ask_object_function
+        "你看到了什么东西",  # list_all
+    ]
+
+    for input_text in input_texts:
+        response = question_to_answer(input_text)[0]
+        print(response)
+
+
+if __name__ == "__main__":
+    test()
+    test_baidu_dialogue()
