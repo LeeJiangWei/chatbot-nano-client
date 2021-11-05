@@ -170,9 +170,9 @@ class MainProcess(object):
                 # wakeup
                 recognized_str = "你好米娅"
                 # 将用户输入的语音转换成文字的结果群发给每个前端
-                groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+                self.send_question_to_frontend(recognized_str)
                 # 如果STT（语音转文字）异常，通过置success=False向前端传达出错了的信号
-                # groupSendPackage(Package.voice_to_word_result("STT出错", success=False), self.clients)  # 具体错误可以具体写
+                # self.send_question_to_frontend("STT出错", success=False)  # 具体错误可以具体写
                 # self.state = 0
 
                 t1 = time.time()
@@ -263,7 +263,7 @@ class MainProcess(object):
             else:
                 recognized_str = query_text
 
-            groupSendPackage(Package.voice_to_word_result(recognized_str), self.clients)
+            self.send_question_to_frontend(recognized_str)
             recognized_str = remove_punctuation(recognized_str)
             logger.info(f"处理后文本：{recognized_str}")
 
@@ -285,7 +285,7 @@ class MainProcess(object):
             logger.info(f"Rasa: {time.time() - start:.2f}s")
 
             self.state = 2  # robot speaking
-            groupSendPackage(Package.response_word_result(response_word), self.clients)
+            self.send_response_to_frontend(response_word)
             if query_text:  # 如果是直接给出文本，得到一次答复之后就退出，因为重复问同一句话没有意义
                 return response_word
 
@@ -299,26 +299,42 @@ class MainProcess(object):
 
         self.state = 0  # waiting
 
-    def draw_visual_result(self):
+    def exit(self):
+        # 当程序执行结束时，经常出现__del__没有被调用的情况，这个现象暂时无法找到原因，只能手动关闭k4a相机，避免这种情况发生
+        # cv2相机不需要此操作；ctrl+C打断程序不需要此操作，不会卡住
+        self.scene_cam.close()
+
+    def draw_visual_result(self, imgpath=None):
+        r"""本函数支持外部单独调用，传入非空的imgpath为图片路径"""
         with open("visual_info.txt", "w") as fp:
             fp.write("时间戳:" + self.visual_info["timestamp"] + "\n")
             for item in self.visual_info["attribute"]:
                 fp.write(str(item) + "\n")
 
-        img = Image.open(self.scene_cam.savepath).convert("RGB")
+        if imgpath is None:
+            imgpath = self.scene_cam.savepath
+        img = Image.open(imgpath).convert("RGB")
         drawer = ImageDraw.ImageDraw(img)
         fontsize = 13
         font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
         for attr in self.visual_info["attribute"]:
             # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
             # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
-            drawer.text(attr["bbox"][:2], attr["category"], fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
+            drawer.text(attr["bbox"][:2], f'{attr["category"]} {round(attr["confidence"] * 100 + 0.5)}', fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
             # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
             drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
         img.save("tmp2.jpg")
         with open("tmp2.jpg", "rb") as fp:
             # 赋值后就会自动把图像发给前端
             self.detection_result = transform_for_send(fp.read())
+
+    def send_question_to_frontend(self, text, success=True):
+        r"""向前端群发用户提出的问题文本"""
+        groupSendPackage(Package.voice_to_word_result(text, success=success), self.clients)
+
+    def send_response_to_frontend(self, text, success=True):
+        r"""向前端群发智能助理的回答文本"""
+        groupSendPackage(Package.response_word_result(text, success=success), self.clients)
 
 
 def main():
@@ -341,6 +357,9 @@ def main():
         t = threading.Thread(target=client_service, args=(recv_sock, recv_addr, main_process, ))
         t.setDaemon(True)
         t.start()
+
+    # 虽然现在这个程序是直接Ctrl+C断开的，如果后续能够运行到底，就必须执行exit()
+    main_process.exit()
 
 
 if __name__ == "__main__":

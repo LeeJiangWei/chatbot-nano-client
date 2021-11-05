@@ -413,6 +413,10 @@ class BaiduDialogue():
 
             if text[-1] not in "，。？！“”：；":
                 text += "。"
+            if "请求失败，请稍后再试" in text:
+                # 偶尔会出现技能请求失败，暂时不知道原因，先用一句装傻的话糊弄过去，同时打印信息在后台
+                print("NOTE: 技能请求失败，input_text:", input_text, "response:", response)
+                text = "这个我也不知道诶。"
             # print("Output from baidu bot: ", text)
         self.chat_response = text
         return self.chat_response

@@ -7,6 +7,8 @@ import logging
 import threading
 import time
 import json
+import socket
+import random
 from PIL import Image, ImageDraw, ImageFont
 
 import pyaudio
@@ -118,6 +120,8 @@ def test_cam_and_qas(input_list=[]):
     Args:
         recognized_str_list (list): 每个元素是一个str类型的测试用例
     """
+    # 在实际运行时出现过"技能[1119369]请求失败，请稍后再试"的信息，经测试error_code!=0的分支是正常运作的，
+    # 也就是说是在error_code=0的时候出来的，很奇怪，用同样的话复现不出来，用其他的话也没有复现成功过
     print("摄像头跟问答系统联合功能测试开始...")
     # 每个元素就是一个测试用例
     input_list = [
@@ -145,7 +149,7 @@ def test_cam_and_qas(input_list=[]):
         t1 = time.time()
         logger.info("Waiting server...")
 
-        # time.sleep(0.5)  # 仅在测试时休眠0.5秒，用于防止QPS>1
+        time.sleep(0.5)  # 仅在测试时休眠0.5秒，用于防止QPS>1
         # 聊天api不需要依赖视觉信息，所以可以先开起来，再接着等视觉信息
         chat_proc = threading.Thread(target=chatter.run, args=(recognized_str,))
         chat_proc.setDaemon(True)
@@ -187,6 +191,40 @@ def test_cam_and_qas(input_list=[]):
 
     print("摄像头跟问答系统联合功能测试结束。")
     return
+
+
+def test_cam_and_frontend():
+    r"""Author: zhang.haojian
+    测试摄像头拍摄图片并发给视觉模块，然后将返回的视觉信息打在前端界面上，用于支持在不开启rasa server的情况下测试视觉模块效果
+    """
+    from main import MainProcess, client_service
+    print("摄像头跟前端联合功能测试开始...")
+
+    main_process = MainProcess()
+    # NOTE: 要用到摄像头时记得加上sudo！
+    main_process.scene_cam = K4aCamera(HOST, PORT)
+    I = InfoObtainer(HOST, PORT_INFO)
+    data = {"require": "attribute"}
+
+    sock = socket.socket()
+    # 该配置允许后端在断开连接后端口立即可用，也即没有TIME_WAIT阶段，调试必备
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(SOCKET)
+    sock.listen(5)
+    recv_sock, recv_addr = sock.accept()
+    t = threading.Thread(target=client_service, args=(recv_sock, recv_addr, main_process, ))
+    t.setDaemon(True)
+    t.start()
+
+    for cnt in range(20):
+        main_process.scene_cam.send_single_image()
+        main_process.visual_info = I.obtain(data, False)
+        main_process.draw_visual_result()
+        response_word = f"第{cnt + 1}张图片的识别结果"
+        main_process.send_response_to_frontend(response_word)
+    main_process.exit()
+
+    print("摄像头跟前端联合功能测试结束.")
 
 
 def test_player_ws(input_list=[]):
@@ -360,8 +398,7 @@ def test_recorder_auto_and_asr():
 
 def test_interact():
     r"""测试主程序中的interact函数，主要是通过大量用例测试rasa的输出结果是否正常"""
-    from main import MainProcess,client_service
-    import socket
+    from main import MainProcess, client_service
 
     main_process = MainProcess()
     main_process.init_backend()
@@ -379,9 +416,23 @@ def test_interact():
     # 目前的键值有：weather location chat want position color quantity function
     with open("rasa_querys.json", "r") as fp:
         data = json.load(fp)
+    from utils.utils import EN_ZH_MAPPING
+    categories = set(EN_ZH_MAPPING.values())
+    for cate in ["", "地板"]:
+        if cate in categories:
+            categories.remove(cate)
+
+    # 对某些类型的问题（如position, color, function），采取自动生成的方式，不易遗漏，也不需要频繁手动更新rasa_querys.json
+    suffix = ["", "呢", "啊", "呀", "嘞", "捏"]
+    punctuation = ["", "？", "！", "。"]
+    data["position"] = [f"{cate}在哪里{random.choice(suffix)}{random.choice(punctuation)}" for cate in categories]
+    data["color"] = [f"{cate}是什么颜色的{random.choice(suffix)}{random.choice(punctuation)}" for cate in categories]
+    query = ["有什么功能", "有什么用", "可以用来干嘛", "的作用是什么"]
+    data["function"] = [f"{cate}{random.choice(query)}{random.choice(suffix)}{random.choice(punctuation)}" for cate in categories]
 
     results = []
-    focused_keys = ["position"]
+    focused_keys = ["position", "function", "color"]
+    # focused_keys = ["new"]
     ignore_keys = ["ignore"]
 
     for key, query_texts in data.items():
@@ -402,6 +453,7 @@ def test_interact():
 
     with open("rasa_output.txt", "w") as fp:
         fp.writelines(results)
+    main_process.exit()
 
 
 def debug():
@@ -414,6 +466,7 @@ if __name__ == "__main__":
     # test_tts_and_player()
     # test_tts_and_asr()
     # test_cam_and_qas()
+    # test_cam_and_frontend()
     # test_player_ws()
     # test_listener_with_tts_and_asr()
     # test_listener_and_waker()
