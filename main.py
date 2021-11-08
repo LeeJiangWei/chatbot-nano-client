@@ -171,9 +171,6 @@ class MainProcess(object):
                 recognized_str = "你好米娅"
                 # 将用户输入的语音转换成文字的结果群发给每个前端
                 self.send_question_to_frontend(recognized_str)
-                # 如果STT（语音转文字）异常，通过置success=False向前端传达出错了的信号
-                # self.send_question_to_frontend("STT出错", success=False)  # 具体错误可以具体写
-                # self.state = 0
 
                 t1 = time.time()
                 spk_name = self.vpr.get_spk_name(wav_data)
@@ -184,6 +181,11 @@ class MainProcess(object):
                 self.emotion_cam.send_single_image()
                 data = {"require": "emotion"}
                 result = self.I.obtain(data, False)
+                if not result["success"]:
+                    self.send_question_to_frontend("获取情绪信息出错，请检查服务器状态", success=False)
+                    self.state = 0
+                    # 主函数里是continue，因为主函数是个死循环，互动环节里是break，有问题就结束互动环节，注意区分
+                    continue
                 logger.info(f"情绪识别结果：{result['emotion']}")
                 welcome_word_suffix = {  # 分开心、不开心、平静三类
                     "neutral": ["你别绷着个脸嘛，笑一笑十年少", "你冷峻的脸庞让我着迷", "你就是这间房最酷的仔", "高冷就是你的代名词", "嘤嘤嘤，不要这么冷漠嘛", "戳戳，笑一个"],
@@ -274,6 +276,10 @@ class MainProcess(object):
 
             t1 = time.time()
             visual_proc.join()  # 等待获取视觉信息的线程运行结束，也即收到视觉模块的回复
+            if not self.visual_info["success"]:
+                self.send_question_to_frontend("获取场景信息出错，请检查服务器状态", success=False)
+                self.state = 0
+                break
             logger.info(f"Get visual info: {time.time() - t1:.2f}s")
             # 获取回复文本跟画图相互独立，另外开一个线程
             draw_proc = threading.Thread(target=self.draw_visual_result, args=())
@@ -329,11 +335,11 @@ class MainProcess(object):
             self.detection_result = transform_for_send(fp.read())
 
     def send_question_to_frontend(self, text, success=True):
-        r"""向前端群发用户提出的问题文本"""
+        r"""向前端群发用户提出的问题文本, success=False表示某个地方执行出错，此时text会以红色文本居中显示"""
         groupSendPackage(Package.voice_to_word_result(text, success=success), self.clients)
 
     def send_response_to_frontend(self, text, success=True):
-        r"""向前端群发智能助理的回答文本"""
+        r"""向前端群发智能助理的回答文本, success=False表示某个地方执行出错，此时text会以红色文本居中显示"""
         groupSendPackage(Package.response_word_result(text, success=success), self.clients)
 
 

@@ -155,7 +155,7 @@ def test_cam_and_qas(input_list=[]):
         chat_proc.setDaemon(True)
         chat_proc.start()
 
-        data = {"require": "attribute"}
+        data = {"require": "scene"}
         result = I.obtain(data, False)
         with open("visual_info.txt", "w") as fp:
             fp.write("时间戳:" + result["timestamp"] + "\n")
@@ -204,7 +204,7 @@ def test_cam_and_frontend():
     # NOTE: 要用到摄像头时记得加上sudo！
     main_process.scene_cam = K4aCamera(HOST, PORT)
     I = InfoObtainer(HOST, PORT_INFO)
-    data = {"require": "attribute"}
+    data = {"require": "scene"}
 
     sock = socket.socket()
     # 该配置允许后端在断开连接后端口立即可用，也即没有TIME_WAIT阶段，调试必备
@@ -431,13 +431,13 @@ def test_interact():
     data["function"] = [f"{cate}{random.choice(query)}{random.choice(suffix)}{random.choice(punctuation)}" for cate in categories]
 
     results = []
-    focused_keys = ["position", "function", "color"]
-    # focused_keys = ["new"]
+    # focused_keys = ["position", "function", "color"]
+    focused_keys = ["position"]
     ignore_keys = ["ignore"]
 
     for key, query_texts in data.items():
-        # if key not in focused_keys:
-        #     continue
+        if key not in focused_keys:
+            continue
         if key in ignore_keys:
             continue
         print(f"测试rasa对{key}类问题的回答..")
