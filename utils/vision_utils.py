@@ -3,6 +3,7 @@ import pickle
 import random
 import gzip
 from base64 import b64encode
+from PIL import Image, ImageDraw, ImageFont
 
 import numpy as np
 import cv2
@@ -117,7 +118,31 @@ def get_color_dict():
 
     return bbox_color_dict
 
+BBOX_COLOR_DICT = get_color_dict()
+
 
 def transform_for_send(bytes_data):
     r"""因为json只支持string不支持bytes，为了网络传输方便把图像原始的二进制数据转换成string"""
     return b64encode(gzip.compress(bytes_data, 6)).decode("utf-8")
+
+
+def add_visual_info_into_img(imgpath, visual_info):
+    r"""给一张图片添加视觉信息（bbox跟文字）
+    Args:
+        imgpath (str): 图片路径
+        visual_info (dict): 视觉信息
+    Return:
+        img (PIL.Image): 加上了视觉信息的Image对象
+    """
+    img = Image.open(imgpath).convert("RGB")
+    drawer = ImageDraw.ImageDraw(img)
+    fontsize = 13
+    font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
+    for attr in visual_info["attribute"]:
+        # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
+        # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+        drawer.text(attr["bbox"][:2], f'{attr["category"]} {round(attr["confidence"] * 100 + 0.5)}', fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
+        # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
+        drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
+
+    return img

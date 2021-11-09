@@ -6,7 +6,6 @@ import socket
 import threading
 import time
 import random
-from PIL import Image, ImageDraw, ImageFont
 
 import pyaudio
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 把tensorflow的日志等级降低，不然输出一堆乱七八糟的东西
@@ -18,7 +17,7 @@ from utils.utils import (bytes_to_wav_data, save_wav,
     get_answer, synonym_substitution, remove_punctuation)
 from utils.asr_utils import ASRVoiceAI
 from utils.tts_utils import TTSBiaobei
-from utils.vision_utils import get_color_dict
+from utils.vision_utils import add_visual_info_into_img
 from utils.package_utils import (Package, groupSendPackage, transform_for_send,
     client_service)
 from api import VoicePrint, BaiduDialogue
@@ -63,7 +62,6 @@ EXPECTED_WORD = "miya"
 
 PLOT = False
 
-BBOX_COLOR_DICT = get_color_dict()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
@@ -311,7 +309,7 @@ class MainProcess(object):
         self.scene_cam.close()
 
     def draw_visual_result(self, imgpath=None):
-        r"""本函数支持外部单独调用，传入非空的imgpath为图片路径"""
+        r"""读取一张图片，为其加上视觉模块的识别结果并保存 本函数支持外部单独调用，传入非空的imgpath为图片路径"""
         with open("visual_info.txt", "w") as fp:
             fp.write("时间戳:" + self.visual_info["timestamp"] + "\n")
             for item in self.visual_info["attribute"]:
@@ -319,18 +317,9 @@ class MainProcess(object):
 
         if imgpath is None:
             imgpath = self.scene_cam.savepath
-        img = Image.open(imgpath).convert("RGB")
-        drawer = ImageDraw.ImageDraw(img)
-        fontsize = 13
-        font = ImageFont.truetype("Ubuntu-B.ttf", fontsize)
-        for attr in self.visual_info["attribute"]:
-            # text参数: 锚点xy，文本，颜色，字体，锚点类型(默认xy是左上角)，对齐方式
-            # anchor含义详见https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
-            drawer.text(attr["bbox"][:2], f'{attr["category"]} {round(attr["confidence"] * 100 + 0.5)}', fill=BBOX_COLOR_DICT[attr["category"]], font=font, anchor="lb", align="left")
-            # rectangle参数: 左上xy右下xy，边框颜色，边框厚度
-            drawer.rectangle(attr["bbox"][:2] + attr["bbox"][2:], fill=None, outline=BBOX_COLOR_DICT[attr["category"]], width=2)
-        img.save("tmp2.jpg")
-        with open("tmp2.jpg", "rb") as fp:
+        img = add_visual_info_into_img(imgpath, self.visual_info)
+        img.save("tmp2.png")
+        with open("tmp2.png", "rb") as fp:
             # 赋值后就会自动把图像发给前端
             self.detection_result = transform_for_send(fp.read())
 
